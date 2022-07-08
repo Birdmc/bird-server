@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 bird-protocol = "0.1.2"
 bird-protocol-derive = "0.1.2"
+bird-chat = "0.1.0"
