@@ -1,0 +1,10 @@
+[workspace]
+members = ["bird-data-gen"]
+
+[package]
+name = "bird-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bird-data-gen = { path = "./bird-data-gen" }

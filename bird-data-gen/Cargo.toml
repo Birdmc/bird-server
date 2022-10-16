@@ -1,0 +1,14 @@
+[package]
+name = "bird-data-gen"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+minecraft-data-rs = { version = "0.5.0", features = ["include-data"]}
+proc-macro2 = "1.0.47"
+quote = "1.0.21"
+syn = "1.0.102"
+convert_case = "0.6.0"
