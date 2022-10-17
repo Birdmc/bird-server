@@ -1,5 +1,6 @@
 //! Generate enum of all vanilla biomes with methods (and some helper enums):
 //! - const from_id(u32) -> Option<Self>
+//! - const from_name(&str) -> Option<Self>
 //! - const get_id(&self) -> u32
 //! - const get_name(&self) -> &'static str
 //! - const get_category(&self) -> BiomeCategory
@@ -17,11 +18,11 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
 pub fn generate_biomes(api: &Api) -> syn::Result<TokenStream> {
-    let biomes = api.biomes.biomes_array().unwrap();
     let mut categories = HashSet::new();
     let mut precipitations = HashSet::new();
     let mut biome_enum_ts = Vec::new();
     let mut biome_from_id_ts = Vec::new();
+    let mut biome_from_name_ts = Vec::new();
     let mut biome_id_ts = Vec::new();
     let mut biome_name_ts = Vec::new();
     let mut biome_category_ts = Vec::new();
@@ -30,7 +31,7 @@ pub fn generate_biomes(api: &Api) -> syn::Result<TokenStream> {
     let mut biome_dimension_ts = Vec::new();
     let mut biome_color_ts = Vec::new();
     let mut biome_rain_fall_ts = Vec::new();
-    for biome in biomes {
+    for biome in api.biomes.biomes_array().unwrap() {
         let Biome {
             id,
             name,
@@ -49,6 +50,7 @@ pub fn generate_biomes(api: &Api) -> syn::Result<TokenStream> {
         let precipitation_enum_ident = Ident::new(precipitation.to_case(Case::Pascal).as_str(), Span::call_site());
         biome_enum_ts.push(quote! { #biome_enum_ident });
         biome_from_id_ts.push(quote! { #id => std::option::Option::Some( Self:: #biome_enum_ident)});
+        biome_from_name_ts.push(quote! { #name => std::option::Option::Some( Self:: #biome_enum_ident)});
         biome_id_ts.push(quote! { Self:: #biome_enum_ident => #id });
         biome_name_ts.push(quote! { Self:: #biome_enum_ident => &#name });
         biome_category_ts.push(quote! { Self:: #biome_enum_ident => BiomeCategory:: #category_enum_ident });
@@ -76,6 +78,13 @@ pub fn generate_biomes(api: &Api) -> syn::Result<TokenStream> {
             pub const fn from_id(id: u32) -> std::option::Option<Self> {
                 match id { 
                     #(#biome_from_id_ts,)*
+                    _ => std::option::Option::None
+                }
+            }
+
+            pub fn from_name(name: &str) -> std::option::Option<Self> {
+                match name {
+                    #(#biome_from_name_ts,)*
                     _ => std::option::Option::None
                 }
             }
