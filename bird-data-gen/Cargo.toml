@@ -6,9 +6,14 @@ edition = "2021"
 [lib]
 proc-macro = true
 
+[net]
+git-fetch-with-cli = true
+
 [dependencies]
-minecraft-data-rs = { version = "0.5.0", features = ["include-data"]}
+minecraft-data-rs = { path = "../minecraft-data-rs" }
 proc-macro2 = "1.0.47"
 quote = "1.0.21"
 syn = "1.0.102"
 convert_case = "0.6.0"
+serde_derive = "1.0.137"
+serde = "1.0.137"

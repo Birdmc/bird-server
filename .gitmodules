@@ -1,0 +1,6 @@
+[submodule "minecraft-data-rs"]
+	path = minecraft-data-rs
+	url = https://github.com/Birdmc/minecraft-data-rs
+[submodule "minecraft-data"]
+	path = minecraft-data
+	url = https://github.com/PrismarineJS/minecraft-data

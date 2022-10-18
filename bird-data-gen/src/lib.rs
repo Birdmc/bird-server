@@ -1,5 +1,6 @@
 use biomes::generate_biomes;
 use items::generate_items;
+use materials::generate_materials;
 use minecraft_data_rs::{api::versions_by_minecraft_version, Api};
 use proc_macro::TokenTree;
 use proc_macro2::Span;
@@ -7,6 +8,7 @@ use quote::quote;
 
 mod biomes;
 mod items;
+mod materials;
 
 #[proc_macro]
 pub fn generate_data(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -30,5 +32,6 @@ fn generate_data_impl(input: proc_macro::TokenStream) -> syn::Result<proc_macro2
     let mut result = Vec::new();
     result.push(generate_biomes(&api)?);
     result.push(generate_items(&api)?);
+    result.push(generate_materials(&api)?);
     Ok(quote! { #(#result)* })
 }
