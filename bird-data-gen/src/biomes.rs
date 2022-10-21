@@ -1,6 +1,6 @@
 //! Generate enum of all vanilla biomes with methods (and some helper enums):
 //! - const from_id(u32) -> Option<Self>
-//! - const from_name(&str) -> Option<Self>
+//! - fn from_name(&str) -> Option<Self>
 //! - const get_id(&self) -> u32
 //! - const get_name(&self) -> &'static str
 //! - const get_category(&self) -> BiomeCategory

@@ -1,4 +1,5 @@
 use biomes::generate_biomes;
+use blocks::generate_blocks;
 use items::generate_items;
 use materials::generate_materials;
 use minecraft_data_rs::{api::versions_by_minecraft_version, Api};
@@ -9,6 +10,7 @@ use quote::quote;
 mod biomes;
 mod items;
 mod materials;
+mod blocks;
 
 #[proc_macro]
 pub fn generate_data(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -33,5 +35,8 @@ fn generate_data_impl(input: proc_macro::TokenStream) -> syn::Result<proc_macro2
     result.push(generate_biomes(&api)?);
     result.push(generate_items(&api)?);
     result.push(generate_materials(&api)?);
+    // let blocks = generate_blocks(&api)?;
+    // println!("{}", blocks);
+    result.push(generate_blocks(&api)?);
     Ok(quote! { #(#result)* })
 }

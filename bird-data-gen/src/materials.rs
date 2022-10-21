@@ -1,5 +1,5 @@
 //! Generate enum of all vanilla materials:
-//! - const from_name(&str) -> Option<Self>
+//! - fn from_name(&str) -> Option<Self>
 //! - const get_name(&self) -> &'static str
 //! - const get_value(&self, item: u32) -> Option<f32>
 

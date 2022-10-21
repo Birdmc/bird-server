@@ -1,5 +1,6 @@
 //! Generate enum of all vanilla items with methods:
 //! - const from_id(u32) -> Option<Self>
+//! - fn from_name(&str) -> Option<Self>
 //! - const get_id(&self) -> u32
 //! - const get_name(&self) -> &'static str
 //! - const get_stack_size(&self) -> u8
@@ -12,6 +13,7 @@ use quote::quote;
 pub fn generate_items(api: &Api) -> syn::Result<TokenStream> {
     let mut item_enum_ts = Vec::new();
     let mut item_from_id_ts = Vec::new();
+    let mut item_from_name_ts = Vec::new();
     let mut item_id_ts = Vec::new();
     let mut item_name_ts = Vec::new();
     let mut item_stack_size_ts = Vec::new();
@@ -24,6 +26,7 @@ pub fn generate_items(api: &Api) -> syn::Result<TokenStream> {
         } = item;
         let item_enum_ident = Ident::new(name.to_case(Case::Pascal).as_str(), Span::call_site());
         item_from_id_ts.push(quote! { #id => std::option::Option::Some(Self:: #item_enum_ident ) });
+        item_from_name_ts.push(quote! { #name => std::option::Option::Some(Self:: #item_enum_ident) });
         item_id_ts.push(quote! { Self:: #item_enum_ident => #id });
         item_name_ts.push(quote! { Self:: #item_enum_ident => #name });
         item_stack_size_ts.push(quote! { Self:: #item_enum_ident => #stack_size });
@@ -37,6 +40,13 @@ pub fn generate_items(api: &Api) -> syn::Result<TokenStream> {
             pub const fn from_id(id: u32) -> std::option::Option<Self> {
                 match id {
                     #(#item_from_id_ts,)*
+                    _ => std::option::Option::None
+                }
+            }
+
+            pub fn from_name(name: &str) -> std::option::Option<Self> {
+                match name {
+                    #(#item_from_name_ts,)*
                     _ => std::option::Option::None
                 }
             }
