@@ -1,8 +1,3 @@
-//! Generate enum of all vanilla materials:
-//! - fn from_name(&str) -> Option<Self>
-//! - const get_name(&self) -> &'static str
-//! - const get_value(&self, item: u32) -> Option<f32>
-
 use convert_case::{Casing, Case};
 use minecraft_data_rs::Api;
 use proc_macro2::{TokenStream, Span, Ident};

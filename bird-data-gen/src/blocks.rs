@@ -1,22 +1,3 @@
-//! Generates enum of all vanilla blocks with methods (and some helper enums):
-//! - const from_id(id: u32) -> Option<Self> -- will return block with default state
-//! - fn from_name(name: &str) -> Option<Self> -- will return block with default state
-//! - fn from_id_with_state(id: u32, state: &HashMap<&str, &str>) -> Option<Self> -- should be changed to result
-//! - fn from_name_with_state(name: &str, state: &HashMap<&str, &str>) -> Option<Self> -- should be changed to result
-//! - const from_state(state: u32) -> Option<Self>
-//! - const get_id(&self) -> u32
-//! - const get_name(&self) -> &'static str
-//! - const get_hardness(&self) -> f32
-//! - const get_blast_resistance(&self) -> f32
-//! - const is_diggable(&self) -> bool
-//! - fn get_material(&self) -> Material
-//! - const is_transparent(&self) -> bool
-//! - const get_emit_light(&self) -> u8
-//! - const get_filter_light(&self) -> u8
-//! - const get_state(&self) -> u32
-//! - const get_drops(&self) -> &'static [u32] -- will return slice of items ids
-//! - fn get_item(&self) -> Option<Item>
-
 use std::collections::HashMap;
 
 use convert_case::{Case, Casing};
@@ -35,18 +16,12 @@ pub fn generate_blocks(api: &Api) -> syn::Result<TokenStream> {
     // let mut blocks_from_id_with_state_ts = Vec::new();
     // let mut blocks_from_name_with_state_ts = Vec::new();
     let mut blocks_from_state_ts = Vec::new();
-    let mut blocks_id_ts = Vec::new();
-    let mut blocks_name_ts = Vec::new();
-    let mut blocks_hardness_ts = Vec::new();
-    let mut blocks_resistance_ts = Vec::new();
-    let mut blocks_diggable_ts = Vec::new();
-    let mut blocks_material_ts = Vec::new();
-    let mut blocks_transparent_ts = Vec::new();
-    let mut blocks_emit_light_ts = Vec::new();
-    let mut blocks_filter_light_ts = Vec::new();
     let mut blocks_state_ts = Vec::new();
-    let mut blocks_drops_ts = Vec::new();
     let mut blocks_state_enums_ts = Vec::new();
+    let mut blocks_data_from_id_ts = Vec::new();
+    let mut blocks_data_from_name_ts = Vec::new();
+    let mut blocks_data_ts = Vec::new();
+    let mut blocks_const_data_ts = Vec::new();
 
     let blocks_array = api.blocks.blocks_array().unwrap();
     let mut enum_states_keyed = HashMap::new();
@@ -138,7 +113,7 @@ pub fn generate_blocks(api: &Api) -> syn::Result<TokenStream> {
                         Ident::new(match state.name.as_str() {
                             "type" => "ty",
                             others => others,
-                        }.to_case(Case::Pascal).as_str(), Span::call_site()),
+                        }.to_case(Case::Snake).as_str(), Span::call_site()),
                         match state.state_type {
                             StateType::Bool => quote! { bool },
                             StateType::Enum => quote! { #state_ty },
@@ -203,20 +178,19 @@ pub fn generate_blocks(api: &Api) -> syn::Result<TokenStream> {
             let mut current_state = min_state_id as u32;
             for creator in &creators {
                 blocks_from_state_ts.push(quote! { #current_state => std::option::Option::Some(#creator) });
-                blocks_state_ts.push(quote!{ #creator => #current_state });
+                blocks_state_ts.push(quote!{ #creator => std::option::Option::Some(#current_state) });
                 current_state += 1;
             }
         }
-        blocks_id_ts.push(quote! { #block_enum_in_match_repr => #id });
-        blocks_name_ts.push(quote! { #block_enum_in_match_repr => #name });
-        blocks_hardness_ts.push(quote! { #block_enum_in_match_repr => #hardness});
-        blocks_resistance_ts.push(quote! { #block_enum_in_match_repr => #blast_resistance});
-        blocks_diggable_ts.push(quote! { #block_enum_in_match_repr => #diggable});
-        blocks_material_ts.push(quote! { #block_enum_in_match_repr => Material::from_name( #material )});
-        blocks_transparent_ts.push(quote! { #block_enum_in_match_repr => #transparent});
-        blocks_emit_light_ts.push(quote! { #block_enum_in_match_repr => #emit_light});
-        blocks_filter_light_ts.push(quote! { #block_enum_in_match_repr => #filter_light});
-        blocks_drops_ts.push(quote! { #block_enum_in_match_repr => &[#(#drops,)*]});
+        let block_data_const_ident = Ident::new(name.to_case(Case::UpperSnake).as_str(), Span::call_site());
+        blocks_const_data_ts.push(quote! { 
+            pub const #block_data_const_ident: super::BlockData<'static> = super::BlockData::new(
+                #id, #name, #hardness, #blast_resistance, #diggable, #material, #transparent, #emit_light, #filter_light, &[#(#drops,)*]
+            );
+        });
+        blocks_data_ts.push(quote! { #block_enum_in_match_repr => &block_data:: #block_data_const_ident });
+        blocks_data_from_id_ts.push(quote! { #id => std::option::Option::Some(&block_data:: #block_data_const_ident ) });
+        blocks_data_from_name_ts.push(quote! { #name => std::option::Option::Some(&block_data:: #block_data_const_ident ) });
         blocks_enum_ts.push(block_enum_repr);
     }
 
@@ -228,7 +202,25 @@ pub fn generate_blocks(api: &Api) -> syn::Result<TokenStream> {
         )*
 
         #[derive(Clone, Copy, Debug, PartialEq)]
+        pub struct BlockData<'a> {
+            pub id: u32,
+            pub name: &'a str,
+            pub hardness: f32,
+            pub blast_resistance: f32,
+            pub diggable: bool,
+            pub material: &'a str,
+            pub transparent: bool,
+            pub emit_light: u8,
+            pub filter_light: u8,
+            pub drops: &'a [u32],
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq)]
         pub enum Block { #(#blocks_enum_ts,)* }
+
+        mod block_data {
+            #(#blocks_const_data_ts)*
+        }
 
         impl Block {
             pub const fn from_id(id: u32) -> std::option::Option<Self> {
@@ -252,69 +244,53 @@ pub fn generate_blocks(api: &Api) -> syn::Result<TokenStream> {
                 }
             }
 
-            pub const fn get_id(&self) -> u32 {
+            pub const fn get_data(&self) -> &'static BlockData<'static> {
                 match self {
-                    #(#blocks_id_ts,)*
+                    #(#blocks_data_ts,)*
                 }
             }
 
-            pub const fn get_name(&self) -> &'static str {
+            pub const fn get_state(&self) -> std::option::Option<u32> {
                 match self {
-                    #(#blocks_name_ts,)*
+                    #(#blocks_state_ts,)*
+                    _ => std::option::Option::None
+                }
+            }
+        }
+
+        impl<'a> BlockData<'a> {
+            const fn new(
+                id: u32, name: &'a str, hardness: f32, 
+                blast_resistance: f32, diggable: bool, material: &'a str,
+                transparent: bool, emit_light: u8, filter_light: u8,
+                drops: &'a [u32]
+            ) -> Self {
+                Self { 
+                    id, name, hardness, blast_resistance, diggable, 
+                    material, transparent, emit_light, filter_light, drops 
                 }
             }
 
-            pub const fn get_hardness(&self) -> f32 {
-                match self {
-                    #(#blocks_hardness_ts,)*
-                }
-            }
-
-            pub const fn get_blast_resistance(&self) -> f32 {
-                match self {
-                    #(#blocks_resistance_ts,)*
-                }
-            }
-
-            pub const fn is_diggable(&self) -> bool {
-                match self {
-                    #(#blocks_diggable_ts,)*
-                }
-            }
-
-            pub fn get_material(&self) -> std::option::Option<Material> {
-                match self {
-                    #(#blocks_material_ts,)*
+            pub const fn from_id(id: u32) -> std::option::Option<&'static Self> {
+                match id {
+                    #(#blocks_data_from_id_ts,)*
                     _ => std::option::Option::None
                 }
             }
 
-            pub const fn is_transparent(&self) -> bool {
-                match self {
-                    #(#blocks_transparent_ts,)*
+            pub fn from_name(name: &str) -> std::option::Option<&'static Self> {
+                match name {
+                    #(#blocks_data_from_name_ts,)*
+                    _ => std::option::Option::None
                 }
             }
 
-            pub const fn get_emit_light(&self) -> u8 {
-                match self {
-                    #(#blocks_emit_light_ts,)*
-                }
-            }
+            pub fn get_material(&self) -> std::option::Option<Material> {
+                Material::from_name(self.material)
+            } 
 
-            pub const fn get_filter_light(&self) -> u8 {
-                match self {
-                    #(#blocks_filter_light_ts,)*
-                }
-            }
-
-            pub const fn get_drops(&self) -> &'static [u32] {
-                match self {
-                    #(#blocks_drops_ts,)*
-                }
-            }
-
-            pub fn get_item(&self) -> std::option::Option<Item> {
-                Item::from_name(self.get_name())
+            pub fn as_item_data(&self) -> std::option::Option<&'static ItemData> {
+                ItemData::from_name(self.name)
             }
         }
     })
