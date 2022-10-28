@@ -8,6 +8,7 @@ pub struct RemainingBytesArray;
 pub struct RemainingArray<V, VV>(PhantomData<(V, VV)>);
 pub struct LengthProvidedBytesArray<L, LV>(PhantomData<(L, LV)>);
 pub struct LengthProvidedArray<L, LV, V, VV>(PhantomData<(L, LV, V, VV)>);
+pub struct Json;
 
 pub trait ProtocolLength {
     fn into_usize(self) -> usize;

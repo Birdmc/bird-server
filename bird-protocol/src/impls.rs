@@ -1,5 +1,7 @@
 use std::{borrow::Cow, str::from_utf8};
 
+use serde::{Deserialize, Serialize};
+
 use crate::*;
 
 pub const fn add_u32_without_overflow(first: u32, second: u32) -> u32 {
@@ -202,7 +204,7 @@ pub fn read_str_with_limit<'a, C: ProtocolCursor<'a>, const LIMIT: usize>(
 pub const DEFAULT_LIMIT: usize = 32767;
 pub const CHAT_LIMIT: usize = 262144;
 
-fixed_range_size!(&str = (1, DEFAULT_LIMIT as u32 * 4 + 3));
+fixed_range_size!(&str = (VarInt::SIZE.start, DEFAULT_LIMIT as u32 * 4 + 3));
 
 impl ProtocolWritable for &str {
     fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
@@ -504,5 +506,20 @@ impl<
 {
     fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Cow<'a, [V]>> {
         Self::read_variant(cursor).map(|vec| Cow::Owned(vec))
+    }
+}
+
+fixed_range_size!(Json = (VarInt::SIZE.start, (CHAT_LIMIT as u32 * 4 + 3)));
+
+impl<T: Serialize> ProtocolVariantWritable<T> for Json {
+    fn write_variant<W: ProtocolWriter>(object: &T, writer: &mut W) -> anyhow::Result<()> {
+        write_str_with_limit::<W, CHAT_LIMIT>(serde_json::to_string(object)?.as_str(), writer)
+    }
+}
+
+impl<'a, T: Deserialize<'a>> ProtocolVariantReadable<'a, T> for Json {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<T> {
+        serde_json::from_str(read_str_with_limit::<C, CHAT_LIMIT>(cursor)?)
+            .map_err(|err| ProtocolError::Any(err.into()))
     }
 }
