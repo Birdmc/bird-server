@@ -1,6 +1,9 @@
 use std::{ops::Range, marker::PhantomData};
 
 mod impls;
+mod stdimpls;
+
+pub use crate::stdimpls::StdIOReadProtocolCursor as ReadableProtocolCursor;
 
 pub struct VarInt;
 pub struct VarLong;
