@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::fmt::{Debug, Display, Formatter};
 use std::str::pattern::{Pattern, Searcher};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub enum IdentifierInner<'a> {
@@ -9,7 +10,8 @@ pub enum IdentifierInner<'a> {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(try_from = "String", into = "String")]
 pub struct Identifier<'a>(IdentifierInner<'a>);
 
 impl<'a> Identifier<'a> {
@@ -29,7 +31,7 @@ impl<'a> Identifier<'a> {
     }
 
     /// Safety. Identifier inner should be valid for identifier being
-    pub unsafe fn from_inner_ref_unchecked<'b>(inner: &'a IdentifierInner<'b>) -> Self {
+    pub unsafe fn from_inner_ref_unchecked(inner: &'a IdentifierInner) -> Self {
         Self(match inner {
             IdentifierInner::Full(full) =>
                 IdentifierInner::Full(Cow::Borrowed(full.as_ref())),
@@ -38,13 +40,13 @@ impl<'a> Identifier<'a> {
         })
     }
 
-    pub fn as_reference(&self) -> Identifier {
+    pub fn as_reference(&'a self) -> Identifier {
         unsafe {
-            Self::from_inner_ref(&self.0)
+            Self::from_inner_ref_unchecked(&self.0)
         }
     }
 
-    pub const fn into_inner(self) -> IdentifierInner<'a> {
+    pub fn into_inner(self) -> IdentifierInner<'a> {
         self.0
     }
 
@@ -67,7 +69,7 @@ impl<'a> Identifier<'a> {
         }
     }
 
-    pub fn get_full(&self) -> Cow<'a, str> {
+    pub fn get_full(&self) -> Cow<str> {
         match self.get_inner() {
             IdentifierInner::Full(full) => Cow::Borrowed(full.as_ref()),
             IdentifierInner::Partial(key, value) => Cow::Owned(format!("{}:{}", key, value))
@@ -116,5 +118,43 @@ impl<'a> Display for Identifier<'a> {
 impl<'a> PartialEq for Identifier<'a> {
     fn eq(&self, other: &Self) -> bool {
         self.get_partial() == other.get_partial()
+    }
+}
+
+impl<'a> From<Identifier<'a>> for String {
+    fn from(identifier: Identifier<'a>) -> Self {
+        match identifier.into_inner() {
+            IdentifierInner::Full(full) => full.into_owned(),
+            IdentifierInner::Partial(key, value) => format!("{}:{}", key, value)
+        }
+    }
+}
+
+impl<'a> From<Identifier<'a>> for Cow<'a, str> {
+    fn from(identifier: Identifier<'a>) -> Self {
+        match identifier.into_inner() {
+            IdentifierInner::Full(full) => full,
+            IdentifierInner::Partial(key, value) => Cow::Owned(format!("{}:{}", key, value))
+        }
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+#[error("Parsing of identifier is failed")]
+pub struct IdentifierParseError;
+
+impl<'a> TryFrom<&'a str> for Identifier<'a> {
+    type Error = IdentifierParseError;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        Identifier::new_full(Cow::Borrowed(value)).ok_or(IdentifierParseError)
+    }
+}
+
+impl<'a> TryFrom<String> for Identifier<'a> {
+    type Error = IdentifierParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Identifier::new_full(Cow::Owned(value)).ok_or(IdentifierParseError)
     }
 }
