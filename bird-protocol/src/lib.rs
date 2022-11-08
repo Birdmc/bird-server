@@ -6,11 +6,17 @@ mod stdimpls;
 pub use crate::stdimpls::StdIOReadProtocolCursor as ReadableProtocolCursor;
 
 pub struct VarInt;
+
 pub struct VarLong;
+
 pub struct RemainingBytesArray;
+
 pub struct RemainingArray<V, VV>(PhantomData<(V, VV)>);
+
 pub struct LengthProvidedBytesArray<L, LV>(PhantomData<(L, LV)>);
+
 pub struct LengthProvidedArray<L, LV, V, VV>(PhantomData<(L, LV, V, VV)>);
+
 pub struct Json;
 
 pub trait ProtocolLength {
@@ -46,13 +52,19 @@ pub trait ProtocolCursor<'a> {
 }
 
 pub trait ProtocolWriter {
-    fn write_byte(&mut self, byte: u8);
-
     fn write_bytes(&mut self, bytes: &[u8]);
 
-    fn write_fixed_bytes<const SIZE: usize>(&mut self, bytes: [u8; SIZE]);
+    fn write_byte(&mut self, byte: u8) {
+        self.write_fixed_bytes([byte])
+    }
 
-    fn write_vec_bytes(&mut self, bytes: Vec<u8>);
+    fn write_fixed_bytes<const SIZE: usize>(&mut self, bytes: [u8; SIZE]) {
+        self.write_bytes(bytes.as_slice())
+    }
+
+    fn write_vec_bytes(&mut self, bytes: Vec<u8>) {
+        self.write_bytes(bytes.as_slice())
+    }
 }
 
 pub trait ProtocolWritable: ProtocolSize {
