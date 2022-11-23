@@ -37,9 +37,26 @@ name = "bird-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bird-protocol-macro",
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "bird-protocol-macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "bird-protocol-versions"
+version = "0.1.0"
+dependencies = [
+ "bird-protocol",
 ]
 
 [[package]]

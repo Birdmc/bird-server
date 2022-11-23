@@ -5,6 +5,15 @@ mod stdimpls;
 
 pub use crate::stdimpls::StdIOReadProtocolCursor as ReadableProtocolCursor;
 
+pub mod __private {
+    pub use crate::impls::*;
+}
+
+#[cfg(feature = "derive")]
+pub mod derive {
+    pub use bird_protocol_macro::*;
+}
+
 pub struct VarInt;
 
 pub struct VarLong;
