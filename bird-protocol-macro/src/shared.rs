@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::str::FromStr;
-use proc_macro2::{Ident, Span};
-use syn::{Expr, ExprAssign, ExprPath, Field, Fields, GenericParam, Generics, Lifetime, LifetimeDef, Lit, Token};
+use proc_macro2::{Ident, Span, TokenStream};
+use quote::ToTokens;
+use syn::{Expr, ExprAssign, ExprPath, ExprType, Field, Fields, GenericParam, Generics, Lifetime, LifetimeDef, Lit, Token, Type};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -13,6 +14,7 @@ pub struct VariantAttributes {}
 #[derive(Default)]
 pub struct FieldAttributes {
     pub order: Option<(u32, Span)>,
+    pub variant: Option<TokenStream>,
 }
 
 pub struct Attributes {
@@ -54,6 +56,13 @@ impl Attributes {
             None => Ok(None),
         }
     }
+
+    pub fn remove_type_attribute(&mut self, name: &String) -> syn::Result<Option<TokenStream>> {
+        match self.remove_attribute(name) {
+            Some(expr) => Ok(Some(expr.to_token_stream())),
+            None => Ok(None),
+        }
+    }
 }
 
 impl Parse for Attributes {
@@ -80,6 +89,7 @@ impl Parse for FieldAttributes {
         let mut attributes: Attributes = input.parse()?;
         Ok(Self {
             order: attributes.remove_str_parse_attribute(&"order".into())?,
+            variant: attributes.remove_type_attribute(&"variant".into())?,
         })
     }
 }
