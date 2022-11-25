@@ -15,3 +15,6 @@ features = ["full"]
 
 [dependencies.quote]
 version = "1.0.21"
+
+[dependencies.either]
+version = "1.8.0"

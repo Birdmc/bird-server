@@ -39,7 +39,10 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
                     ty,
                     ..
                 } = field;
-                variables_ts.push(quote! { let #ident = <#ty as bird_protocol::ProtocolReadable<#lifetime>>::read(cursor)? });
+                variables_ts.push(match field_attribute.variant {
+                    Some(variant) => quote! { let #ident = <#variant as bird_protocol::ProtocolVariantReadable<#lifetime, #ty>>::read_variant(cursor)? },
+                    None => quote! { let #ident = <#ty as bird_protocol::ProtocolReadable<#lifetime>>::read(cursor)? },
+                })
             }
             quote! {
                 #(#variables_ts;)*
