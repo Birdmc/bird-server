@@ -4,16 +4,24 @@ use std::str::FromStr;
 use either::Either;
 use proc_macro2::{Ident, Span, TokenStream, TokenTree};
 use quote::{quote, ToTokens};
-use syn::{Expr, ExprAssign, ExprPath, ExprType, Field, Fields, GenericParam, Generics, Lifetime, LifetimeDef, Lit, Token, Type};
+use syn::{Expr, ExprAssign, ExprPath, ExprType, Field, Fields, GenericParam, Generics, Lifetime, LifetimeDef, Lit, Token, Type, Variant};
 use syn::parse::{Parse, ParseStream};
 use syn::parse::discouraged::Speculative;
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::token::Token;
 
-pub struct ObjectAttributes {}
+#[derive(Default)]
+pub struct ObjectAttributes {
+    pub key_variant: Option<TokenStream>,
+    pub key_ty: Option<TokenStream>,
+    pub key_increment: Option<TokenStream>,
+}
 
-pub struct VariantAttributes {}
+#[derive(Default)]
+pub struct VariantAttributes {
+    pub key_value: Option<TokenStream>,
+}
 
 #[derive(Default)]
 pub struct FieldAttributes {
@@ -66,9 +74,15 @@ impl Attributes {
         }
     }
 
-    pub fn remove_type_attribute(&mut self, name: &String) -> syn::Result<Option<TokenStream>> {
+    pub fn remove_ts_attribute(&mut self, name: &String) -> syn::Result<Option<TokenStream>> {
         match self.remove_attribute(name) {
-            // Unchecked because i don't know how to made it checked using Expr enum
+            Some(Expr::Lit(expr_lit)) => match expr_lit.lit {
+                Lit::Str(ref lit_str) => match TokenStream::from_str(&lit_str.value()) {
+                    Ok(ts) => Ok(Some(ts)),
+                    Err(err) => Err(syn::Error::new(expr_lit.span(), err.to_string().as_str()))
+                },
+                _ => Ok(Some(expr_lit.to_token_stream()))
+            }
             Some(expr) => Ok(Some(expr.to_token_stream())),
             None => Ok(None),
         }
@@ -92,9 +106,7 @@ impl Parse for Attributes {
                         TokenTree::Punct(ref punct) => match punct.as_char() {
                             '<' | '(' | '{' | '[' => depth += 1,
                             '>' | ')' | '}' | ']' => depth -= 1,
-                            ',' => if depth <= 0 {
-                                break;
-                            }
+                            ',' => if depth <= 0 { break; }
                             _ => {}
                         },
                         _ => {}
@@ -172,12 +184,32 @@ impl Parse for Attributes {
     }
 }
 
+impl Parse for ObjectAttributes {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut attributes: Attributes = input.parse()?;
+        Ok(Self {
+            key_variant: attributes.remove_ts_attribute(&"variant".into())?,
+            key_ty: attributes.remove_ts_attribute(&"ty".into())?,
+            key_increment: attributes.remove_ts_attribute(&"increment".into())?,
+        })
+    }
+}
+
+impl Parse for VariantAttributes {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut attributes: Attributes = input.parse()?;
+        Ok(Self {
+            key_value: attributes.remove_ts_attribute(&"value".into())?,
+        })
+    }
+}
+
 impl Parse for FieldAttributes {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut attributes: Attributes = input.parse()?;
         Ok(Self {
             order: attributes.remove_str_parse_attribute(&"order".into())?,
-            variant: attributes.remove_type_attribute(&"variant".into())?,
+            variant: attributes.remove_ts_attribute(&"variant".into())?,
         })
     }
 }
@@ -200,7 +232,7 @@ fn expr_path_into_string(path: &ExprPath) -> String {
         .join("::")
 }
 
-fn parse_attributes<A: Parse + Default>(attrs: &Vec<syn::Attribute>, attr_name: &str) -> syn::Result<A> {
+pub fn parse_attributes<A: Parse + Default>(attrs: &Vec<syn::Attribute>, attr_name: &str) -> syn::Result<A> {
     attrs.iter()
         .find(|attr| attr.path.is_ident(attr_name))
         .map(|attr| attr.parse_args())
@@ -230,6 +262,23 @@ pub fn create_prepared_fields(fields: Fields) -> syn::Result<Vec<(Field, FieldAt
         ordered_fields.insert(order as usize, obj);
     }
     Ok(ordered_fields)
+}
+
+pub fn create_prepared_variants(variants: impl Iterator<Item = Variant>, object_attributes: &ObjectAttributes) -> syn::Result<Vec<(Variant, TokenStream, VariantAttributes)>> {
+    let mut result = Vec::new();
+    let mut previous_value = quote! { -1 };
+    let key_ty = object_attributes.key_ty.as_ref().unwrap();
+    let increment = object_attributes.key_increment.clone().unwrap_or_else(|| quote! { + 1 });
+    for variant in variants {
+        let variant_attributes: VariantAttributes = parse_attributes(&variant.attrs, "bp")?;
+        let value = match variant_attributes.key_value {
+            Some(ref value) => value.clone(),
+            None => quote! { (#previous_value #increment) as #key_ty  },
+        };
+        previous_value = value.clone();
+        result.push((variant, value, variant_attributes));
+    }
+    Ok(result)
 }
 
 pub fn obligate_lifetime(generics: &mut Generics) -> syn::Result<(LifetimeDef, Generics)> {

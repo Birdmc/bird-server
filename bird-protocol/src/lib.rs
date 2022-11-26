@@ -5,6 +5,9 @@ mod stdimpls;
 
 pub use crate::stdimpls::StdIOReadProtocolCursor as ReadableProtocolCursor;
 
+pub use anyhow;
+
+#[doc(hidden)]
 pub mod __private {
     pub use crate::impls::*;
 }
