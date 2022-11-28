@@ -16,8 +16,7 @@ pub struct Handshake<'a> {
     pub protocol_version: i32,
     pub server_address: &'a str,
     pub server_port: u16,
-    #[bp(variant = VarInt)]
-    pub next_state: i32,
+    pub next_state: HandshakeNextState,
 }
 
 impl ProtocolSize for HandshakeNextState {

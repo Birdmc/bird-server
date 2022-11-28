@@ -51,7 +51,7 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     let (impl_generics, ..) = spec_impl_generics.split_for_impl();
     Ok(quote! {
         impl #impl_generics bird_protocol::ProtocolReadable<#lifetime> for #ident #type_generics #where_clause {
-            fn read<C: bird_protocol::ProtocolCursor<#lifetime>>(cursor: &mut C) -> bird_protocol::ProtocolResult<Self> {
+            fn read<C: bird_protocol::ProtocolCursor<#lifetime>>(__cursor: &mut C) -> bird_protocol::ProtocolResult<Self> {
                 #function_body
             }
         }
@@ -95,7 +95,7 @@ fn read_fields(fields: Fields, key: TokenStream, lifetime: &impl ToTokens) -> sy
 
 fn read_ts(ty: &impl ToTokens, lifetime: &impl ToTokens, variant: Option<&impl ToTokens>) -> TokenStream {
     match variant {
-        Some(variant) => quote! { <#variant as bird_protocol::ProtocolVariantReadable<#lifetime, #ty>>::read_variant(cursor)? },
-        None => quote! { <#ty as bird_protocol::ProtocolReadable<#lifetime>>::read(cursor)? },
+        Some(variant) => quote! { <#variant as bird_protocol::ProtocolVariantReadable<#lifetime, #ty>>::read_variant(__cursor)? },
+        None => quote! { <#ty as bird_protocol::ProtocolReadable<#lifetime>>::read(__cursor)? },
     }
 }
