@@ -39,7 +39,7 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
                 _ => unreachable!()
             }
         }
-        Data::Union(_) => return Err(syn::Error::new(Span::call_site(), "Union is not supported")),
+        Data::Union(_) => return Err(syn::Error::new(Span::mixed_site(), "Union is not supported")),
     };
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
     Ok(quote! {

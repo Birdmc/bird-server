@@ -4,6 +4,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::*;
 
+macro_rules! gen_u32_operation {
+    ($new_name: ident, $func: ident, $default_value: expr) => {
+        pub const fn $new_name<const N: usize>(array: [u32; N]) -> u32 {
+            if array.len() == 0 { return $default_value; }
+            let mut counter = 1;
+            let mut value = array[0];
+            while counter < array.len() {
+                value = $func(value, array[counter]);
+                counter += 1;
+            }
+            value
+        }
+    }
+}
+
+gen_u32_operation!(add_u32_without_overflow_array, add_u32_without_overflow, 0);
+gen_u32_operation!(max_u32_array, max_u32, u32::MAX);
+gen_u32_operation!(min_u32_array, min_u32, 0);
+
 pub const fn add_u32_without_overflow(first: u32, second: u32) -> u32 {
     match u32::MAX - first < second {
         true => u32::MAX,
