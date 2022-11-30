@@ -31,6 +31,8 @@ pub struct LengthProvidedArray<L, LV, V, VV>(PhantomData<(L, LV, V, VV)>);
 
 pub struct Json;
 
+pub struct Nbt;
+
 pub trait ProtocolLength {
     fn into_usize(self) -> usize;
 

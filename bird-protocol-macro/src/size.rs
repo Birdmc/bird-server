@@ -1,4 +1,3 @@
-use std::env::var;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{Data, DeriveInput, Fields, Type};

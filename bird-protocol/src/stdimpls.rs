@@ -16,6 +16,12 @@ pub struct StdIOReadProtocolCursor<'a, 'c, C: ProtocolCursor<'c>> {
     _marker: PhantomData<&'c ()>,
 }
 
+impl<'a, 'c, C: ProtocolCursor<'c>> StdIOReadProtocolCursor<'a, 'c, C> {
+    pub fn new(cursor: &'a mut C) -> Self {
+        Self { cursor, _marker: PhantomData }
+    }
+}
+
 impl<'a, 'c, C: ProtocolCursor<'c>> io::Read for StdIOReadProtocolCursor<'a, 'c, C> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let length = self.cursor.remaining_bytes().min(buf.len());

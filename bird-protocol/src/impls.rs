@@ -556,3 +556,23 @@ impl<'a, T: Deserialize<'a>> ProtocolVariantReadable<'a, T> for Json {
             .map_err(|err| ProtocolError::Any(err.into()))
     }
 }
+
+fixed_range_size!(Nbt = (1, u32::MAX));
+
+#[cfg(feature = "fastnbt")]
+mod fastnbt_impls {
+    use super::*;
+
+    impl<T: Serialize> ProtocolVariantWritable<T> for Nbt {
+        fn write_variant<W: ProtocolWriter>(object: &T, writer: &mut W) -> anyhow::Result<()> {
+            Ok(writer.write_vec_bytes(fastnbt::to_bytes(object)?))
+        }
+    }
+
+    impl<'a, T: Deserialize<'a>> ProtocolVariantReadable<'a, T> for Nbt {
+        fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<T> {
+            fastnbt::from_reader(ReadableProtocolCursor::new(cursor))
+                .map_err(|err| ProtocolError::Any(err.into()))
+        }
+    }
+}
