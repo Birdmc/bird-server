@@ -30,3 +30,13 @@ pub fn protocol_readable_derive(item: proc_macro::TokenStream) -> proc_macro::To
 pub fn protocol_size_derive(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     derive_impl!(protocol_size_derive_impl(item))
 }
+
+#[proc_macro_derive(ProtocolAll, attributes(bp))]
+pub fn protocol_all_derive(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let mut writable: proc_macro::TokenStream = derive_impl!(protocol_writable_derive_impl(item.clone()));
+    let readable: proc_macro::TokenStream = derive_impl!(protocol_readable_derive_impl(item.clone()));
+    let size: proc_macro::TokenStream = derive_impl!(protocol_size_derive_impl(item));
+    writable.extend(readable.into_iter());
+    writable.extend(size.into_iter());
+    writable
+}

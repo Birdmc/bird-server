@@ -1,8 +1,8 @@
 use std::ops::Range;
 use bird_protocol::{ProtocolReadable, ProtocolSize, ProtocolWritable, VarInt};
-use bird_protocol::derive::{ProtocolReadable, ProtocolSize, ProtocolWritable};
+use bird_protocol::derive::{ProtocolAll, ProtocolReadable, ProtocolSize, ProtocolWritable};
 
-#[derive(ProtocolWritable, ProtocolReadable, ProtocolSize)]
+#[derive(ProtocolAll)]
 #[bp(ty = i32, variant = VarInt)]
 pub enum HandshakeNextState {
     #[bp(value = 1)]
@@ -10,7 +10,7 @@ pub enum HandshakeNextState {
     Login
 }
 
-#[derive(ProtocolWritable, ProtocolReadable, ProtocolSize)]
+#[derive(ProtocolAll)]
 pub struct Handshake<'a> {
     #[bp(variant = VarInt)]
     pub protocol_version: i32,
