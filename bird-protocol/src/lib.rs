@@ -49,6 +49,26 @@ pub enum ProtocolError {
 
 pub type ProtocolResult<T> = Result<T, ProtocolError>;
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ProtocolPacketBound {
+    Client,
+    Server,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ProtocolPacketState {
+    Handshake,
+    Status,
+    Login,
+    Play,
+}
+
+pub trait ProtocolPacket {
+    const ID: i32;
+    const BOUND: ProtocolPacketBound;
+    const STATE: ProtocolPacketState;
+}
+
 pub trait ProtocolSize {
     const SIZE: Range<u32>;
 }

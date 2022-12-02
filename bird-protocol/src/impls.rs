@@ -1,6 +1,7 @@
 use std::{borrow::Cow, str::from_utf8};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::*;
 
@@ -416,6 +417,12 @@ for LengthProvidedBytesArray<L, LV>
     }
 }
 
+impl<'a, L: ProtocolLength, LV: ProtocolVariantWritable<L>> ProtocolVariantWritable<&'a [u8]> for LengthProvidedBytesArray<L, LV> {
+    fn write_variant<W: ProtocolWriter>(object: &&'a [u8], writer: &mut W) -> anyhow::Result<()> {
+        Self::write_variant(*object, writer)
+    }
+}
+
 impl<L: ProtocolLength, LV: ProtocolVariantWritable<L>> ProtocolVariantWritable<Vec<u8>>
 for LengthProvidedBytesArray<L, LV>
 {
@@ -554,6 +561,25 @@ impl<'a, T: Deserialize<'a>> ProtocolVariantReadable<'a, T> for Json {
     fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<T> {
         serde_json::from_str(read_str_with_limit::<C, CHAT_LIMIT>(cursor)?)
             .map_err(|err| ProtocolError::Any(err.into()))
+    }
+}
+
+fixed_size!(Uuid = 16);
+
+impl ProtocolWritable for Uuid {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        Ok(writer.write_bytes(self.as_bytes().as_slice()))
+    }
+}
+
+impl<'a> ProtocolReadable<'a> for Uuid {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let mut bytes = [0u8; 16];
+        let took = cursor.take_bytes(16)?;
+        unsafe {
+            std::ptr::copy_nonoverlapping(took.as_ptr(), bytes.as_mut_ptr(), 16);
+        }
+        Ok(Uuid::from_bytes(bytes))
     }
 }
 

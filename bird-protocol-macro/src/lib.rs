@@ -2,10 +2,12 @@ mod readable;
 mod shared;
 mod writable;
 mod size;
+mod packet;
 
 use writable::impl_derive as protocol_writable_derive_impl;
 use readable::impl_derive as protocol_readable_derive_impl;
 use size::impl_derive as protocol_size_derive_impl;
+use packet::impl_derive as protocol_packet_derive_impl;
 
 macro_rules! derive_impl {
     ($func: expr) => {
@@ -29,6 +31,11 @@ pub fn protocol_readable_derive(item: proc_macro::TokenStream) -> proc_macro::To
 #[proc_macro_derive(ProtocolSize, attributes(bp))]
 pub fn protocol_size_derive(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     derive_impl!(protocol_size_derive_impl(item))
+}
+
+#[proc_macro_derive(ProtocolPacket, attributes(bp))]
+pub fn protocol_packet_derive(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    derive_impl!(protocol_packet_derive_impl(item))
 }
 
 #[proc_macro_derive(ProtocolAll, attributes(bp))]

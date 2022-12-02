@@ -16,6 +16,9 @@ pub struct ObjectAttributes {
     pub key_variant: Option<TokenStream>,
     pub key_ty: Option<TokenStream>,
     pub key_increment: Option<TokenStream>,
+    pub packet_id: Option<TokenStream>,
+    pub packet_bound: Option<TokenStream>,
+    pub packet_state: Option<TokenStream>,
 }
 
 #[derive(Default)]
@@ -191,6 +194,9 @@ impl Parse for ObjectAttributes {
             key_variant: attributes.remove_ts_attribute(&"variant".into())?,
             key_ty: attributes.remove_ts_attribute(&"ty".into())?,
             key_increment: attributes.remove_ts_attribute(&"increment".into())?,
+            packet_id: attributes.remove_ts_attribute(&"id".into())?,
+            packet_bound: attributes.remove_ts_attribute(&"bound".into())?,
+            packet_state: attributes.remove_ts_attribute(&"state".into())?,
         })
     }
 }
