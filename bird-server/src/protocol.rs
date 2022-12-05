@@ -3,6 +3,7 @@ use std::ops::Range;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use bird_chat::component::Component;
+use bird_chat::identifier::Identifier;
 use bird_protocol::{*, ProtocolPacketState::*, ProtocolPacketBound::*};
 use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolReadable, ProtocolSize, ProtocolWritable};
 
@@ -11,7 +12,7 @@ use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolReadable, Proto
 pub enum HandshakeNextState {
     #[bp(value = 1)]
     Status = 1,
-    Login
+    Login,
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
@@ -117,4 +118,72 @@ pub struct LoginSuccess<'a> {
     pub username: &'a str,
     #[bp(variant = "LengthProvidedArray<i32, VarInt, LoginSuccessProperty<'a>, LoginSuccessProperty<'a>>")]
     pub properties: Cow<'a, [LoginSuccessProperty<'a>]>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x3, state = Login, bound = Client)]
+pub struct SetCompression {
+    #[bp(variant = VarInt)]
+    pub threshold: i32,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+#[bp(id = 0x4, state = Login, bound = Client)]
+pub struct LoginPluginRequest<'a> {
+    #[bp(variant = VarInt)]
+    pub message_id: i32,
+    pub channel: Identifier<'a>,
+    #[bp(variant = RemainingBytesArray)]
+    pub data: &'a [u8],
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+pub struct LoginStartSignatureData<'a> {
+    pub timestamp: u64,
+    #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+    pub public_key: &'a [u8],
+    #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+    pub signature: &'a [u8],
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x0, state = Login, bound = Server)]
+pub struct LoginStart<'a> {
+    pub name: &'a str,
+    pub signature_data: Option<LoginStartSignatureData<'a>>,
+    pub uuid: Option<Uuid>,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = bool)]
+pub enum EncryptionResponseVariant<'a> {
+    #[bp(value = true)]
+    VerifyToken {
+        #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+        verify_token: &'a [u8]
+    },
+    #[bp(value = false)]
+    Otherwise {
+        salt: i64,
+        #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+        message_signature: &'a [u8],
+    }
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x1, state = Login, bound = Server)]
+pub struct EncryptionResponse<'a> {
+    #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+    pub shared_secret: &'a [u8],
+    pub variant: EncryptionResponseVariant<'a>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x2, state = Login, bound = Server)]
+pub struct LoginPluginResponse<'a> {
+    #[bp(variant = VarInt)]
+    pub message_id: i32,
+    pub successful: bool,
+    #[bp(variant = RemainingBytesArray)]
+    pub data: &'a [u8],
 }

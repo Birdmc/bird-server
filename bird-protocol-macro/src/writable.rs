@@ -1,6 +1,6 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
-use syn::{Data, DeriveInput, Field, Fields, parse_macro_input, Variant};
+use syn::{Data, DeriveInput, Field, Fields, parse_macro_input, Token, Variant};
 use crate::shared::{create_prepared_fields, create_prepared_variants, ObjectAttributes, parse_attributes};
 
 pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
@@ -30,9 +30,9 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
                     ..
                 } = variant;
                 let write_match = write_match(quote! { Self::#ident }, &fields)?;
+                let write_key = write_ts(&quote! { (#variant_value as #key_ty) }, key_ty, object_attributes.key_variant.as_ref());
                 let write_fields = write_fields(fields)?;
-                let write_key = write_ts(&quote! { (#variant_value as #key_ty) } , key_ty, object_attributes.key_variant.as_ref());
-                variant_matches.push(quote! { #write_match => { #write_key #write_fields } });
+                variant_matches.push(quote! { #write_match => { #write_key; #write_fields } });
             }
             quote! {
                 #(#variant_matches,)*

@@ -4,6 +4,5 @@ members = [
     "bird-data-gen",
     "bird-protocol",
     "bird-protocol-macro",
-    "bird-protocol-versions",
     "bird-server",
 ]

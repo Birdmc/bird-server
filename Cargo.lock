@@ -37,6 +37,7 @@ name = "bird-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bird-chat",
  "bird-protocol-macro",
  "fastnbt",
  "serde",
@@ -56,21 +57,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "bird-protocol-versions"
+name = "bird-server"
 version = "0.1.0"
 dependencies = [
  "bird-chat",
+ "bird-data-gen",
  "bird-protocol",
  "either",
  "serde",
  "uuid",
-]
-
-[[package]]
-name = "bird-server"
-version = "0.1.0"
-dependencies = [
- "bird-data-gen",
 ]
 
 [[package]]

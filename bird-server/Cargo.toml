@@ -3,5 +3,24 @@ name = "bird-server"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-bird-data-gen = { path = "../bird-data-gen" }
+[dependencies.bird-data-gen]
+path = "../bird-data-gen"
+
+[dependencies.bird-protocol]
+path = "../bird-protocol"
+features = ["derive"]
+
+[dependencies.serde]
+version = "1.0.147"
+features = ["derive"]
+
+[dependencies.uuid]
+version = "1.2.2"
+features = ["serde"]
+
+[dependencies.bird-chat]
+path = "../bird-chat"
+
+[dependencies.either]
+version = "1.8.0"
+features = ["serde"]

@@ -26,6 +26,9 @@ optional = true
 [dependencies.uuid]
 version = "1.2.2"
 
+[dependencies.bird-chat]
+path = "../bird-chat"
+
 [features]
 derive = ["dep:bird-protocol-macro"]
 fastnbt = ["dep:fastnbt"]

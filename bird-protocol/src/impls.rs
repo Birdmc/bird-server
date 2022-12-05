@@ -1,4 +1,6 @@
 use std::{borrow::Cow, str::from_utf8};
+use bird_chat::component::Component;
+use bird_chat::identifier::{Identifier, IdentifierInner};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -212,6 +214,11 @@ pub fn write_bytes_with_limit<W: ProtocolWriter, const LIMIT: usize>(
     }
 }
 
+#[inline]
+fn too_long_string() -> anyhow::Error {
+    anyhow::Error::msg("Too long string")
+}
+
 pub fn write_str_with_limit<W: ProtocolWriter, const LIMIT: usize>(
     object: &str,
     writer: &mut W,
@@ -221,7 +228,7 @@ pub fn write_str_with_limit<W: ProtocolWriter, const LIMIT: usize>(
             VarInt::write_variant(&(object.as_bytes().len() as i32), writer)?;
             Ok(writer.write_bytes(object.as_bytes()))
         }
-        false => Err(anyhow::Error::msg("Too long string")),
+        false => Err(too_long_string()),
     }
 }
 
@@ -291,6 +298,12 @@ impl ProtocolVariantWritable<[u8]> for RemainingBytesArray {
     }
 }
 
+impl<'a> ProtocolVariantWritable<&'a [u8]> for RemainingBytesArray {
+    fn write_variant<W: ProtocolWriter>(object: &&'a [u8], writer: &mut W) -> anyhow::Result<()> {
+        Self::write_variant(*object, writer)
+    }
+}
+
 impl ProtocolVariantWritable<Vec<u8>> for RemainingBytesArray {
     fn write_variant<W: ProtocolWriter>(object: &Vec<u8>, writer: &mut W) -> anyhow::Result<()> {
         Self::write_variant(object.as_slice(), writer)
@@ -340,6 +353,12 @@ impl<V, VV: ProtocolVariantWritable<V>> ProtocolVariantWritable<[V]> for Remaini
             VV::write_variant(value, writer)?
         }
         Ok(())
+    }
+}
+
+impl<'a, V, VV: ProtocolVariantWritable<V>> ProtocolVariantWritable<&'a [V]> for RemainingArray<V, VV> {
+    fn write_variant<W: ProtocolWriter>(object: &&'a [V], writer: &mut W) -> anyhow::Result<()> {
+        Self::write_variant(*object, writer)
     }
 }
 
@@ -580,6 +599,48 @@ impl<'a> ProtocolReadable<'a> for Uuid {
             std::ptr::copy_nonoverlapping(took.as_ptr(), bytes.as_mut_ptr(), 16);
         }
         Ok(Uuid::from_bytes(bytes))
+    }
+}
+
+fixed_range_size!(Component<'_> = (1, (262144 * 4) + 3));
+
+impl<'a> ProtocolWritable for Component<'a> {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        write_str_with_limit::<_, CHAT_LIMIT>(serde_json::to_string(self)?.as_str(), writer)
+    }
+}
+
+impl<'a> ProtocolReadable<'a> for Component<'a> {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        read_str_with_limit::<_, CHAT_LIMIT>(cursor)
+            .and_then(|str| serde_json::from_str(str).map_err(|err| ProtocolError::Any(err.into())))
+    }
+}
+
+delegate_size!(Identifier<'_> = &str);
+
+impl<'a> ProtocolWritable for Identifier<'a> {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        match self.get_inner() {
+            IdentifierInner::Full(full) => write_str_with_limit::<_, DEFAULT_LIMIT>(full, writer),
+            IdentifierInner::Partial(key, value) => match key.len() + value.len() <= DEFAULT_LIMIT - 1 {
+                true => {
+                    VarInt::write_variant(&(key.len() as i32 + value.len() as i32 + 1), writer)?;
+                    writer.write_bytes(key.as_bytes());
+                    writer.write_byte(b':');
+                    writer.write_bytes(value.as_bytes());
+                    Ok(())
+                }
+                false => Err(too_long_string()),
+            }
+        }
+    }
+}
+
+impl<'a> ProtocolReadable<'a> for Identifier<'a> {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        Identifier::new_full(Cow::Borrowed(read_str_with_limit::<_, DEFAULT_LIMIT>(cursor)?))
+            .ok_or_else(|| ProtocolError::Any(anyhow::Error::msg("Bad identifier")))
     }
 }
 
