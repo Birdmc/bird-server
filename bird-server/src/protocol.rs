@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::ops::Range;
+use euclid::default::Vector3D;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use bird_chat::component::Component;
@@ -167,7 +168,7 @@ pub enum EncryptionResponseVariant<'a> {
         salt: i64,
         #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
         message_signature: &'a [u8],
-    }
+    },
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
@@ -186,4 +187,255 @@ pub struct LoginPluginResponse<'a> {
     pub successful: bool,
     #[bp(variant = RemainingBytesArray)]
     pub data: &'a [u8],
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x0, state = Play, bound = Client)]
+pub struct SpawnEntity {
+    #[bp(variant = VarInt)]
+    pub entity_id: i32,
+    pub entity_uuid: Uuid,
+    #[bp(variant = VarInt)]
+    pub entity_type: i32,
+    pub position: Vector3D<f64>,
+    #[bp(variant = Angle)]
+    pub pitch: f32,
+    #[bp(variant = Angle)]
+    pub yaw: f32,
+    #[bp(variant = Angle)]
+    pub head_yaw: f32,
+    #[bp(variant = VarInt)]
+    pub data: i32,
+    pub velocity: Vector3D<i16>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x1, state = Play, bound = Client)]
+pub struct SpawnExperienceOrb {
+    #[bp(variant = VarInt)]
+    pub entity_id: i32,
+    pub position: Vector3D<f64>,
+    pub count: i16,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x2, state = Play, bound = Client)]
+pub struct SpawnPlayer {
+    #[bp(variant = VarInt)]
+    pub entity_id: i32,
+    pub player_uuid: Uuid,
+    pub position: Vector3D<f64>,
+    #[bp(variant = Angle)]
+    pub yaw: f32,
+    #[bp(variant = Angle)]
+    pub pitch: f32,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = u8)]
+pub enum EntityAnimation {
+    SwingMainArm,
+    TakeDamage,
+    LeaveBed,
+    SwingOffHand,
+    CriticalEffect,
+    MagicCriticalEffect,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x3, state = Play, bound = Client)]
+pub struct EntityAnimation2C {
+    #[bp(variant = VarInt)]
+    pub entity_id: i32,
+    pub animation: EntityAnimation,
+}
+
+// Identifies block id in award statistics
+pub type AwardStatisticBlock = i32;
+
+// Identified item id in award statistics
+pub type AwardStatisticItem = i32;
+
+// Identifier entity id in award statistics
+pub type AwardStatisticEntity = i32;
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = i32, variant = VarInt)]
+pub enum AwardStatisticCustom {
+    LeaveGame,
+    PlayOneMinute,
+    TimeSinceDeath,
+    TimeSinceRest,
+    SneakTime,
+    WalkOneCm,
+    CrouchOneCm,
+    SprintOneCm,
+    WalkOnWaterOneCm,
+    FallOneCm,
+    ClimbOneCm,
+    FlyOneCm,
+    WalkUnderWaterOneCm,
+    MinecartOneCm,
+    BoatOneCm,
+    PigOneCm,
+    HorseOneCm,
+    AviateOneCm,
+    SwimOneCm,
+    StriderOneCm,
+    Jump,
+    Drop,
+    DamageDealt,
+    DamageDealtAbsorbed,
+    DamageDealtResisted,
+    DamageTaken,
+    DamageBlockedByShield,
+    DamageAbsorbed,
+    DamageResisted,
+    Deaths,
+    MobKills,
+    AnimalsBred,
+    PlayerKills,
+    FishCaught,
+    TalkedToVillager,
+    TradedWithVillager,
+    EatCakeSlice,
+    FillCauldron,
+    UseCauldron,
+    CleanArmor,
+    CleanBanner,
+    CleanShulkerBox,
+    InteractWithBrewingStand,
+    InteractWithBeacon,
+    InspectDropper,
+    InspectHopper,
+    InspectDispenser,
+    PlayNoteBlock,
+    TuneNoteBlock,
+    PotFlower,
+    TriggerTrappedChest,
+    OpenEnderchest,
+    EnchantItem,
+    PlayRecord,
+    InteractWithFurnace,
+    InteractWithCraftingTable,
+    OpenChest,
+    SleepInBed,
+    OpenShulkerBox,
+    OpenBarrel,
+    InteractWithBlastFurnace,
+    InteractWithSmoker,
+    InteractWithLectern,
+    InteractWithCampfire,
+    InteractWithCartographyTable,
+    InteractWithLoom,
+    InteractWithStoneCutter,
+    BellRing,
+    RaidTrigger,
+    RaidWin,
+    InteractWithAnvil,
+    InteractWithGrindstone,
+    TargetHit,
+    InteractWithSmithingTable,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = i32, variant = VarInt)]
+pub enum AwardStatistic {
+    Mined(
+        #[bp(variant = VarInt)]
+        AwardStatisticBlock
+    ),
+    Crafted(
+        #[bp(variant = VarInt)]
+        AwardStatisticItem
+    ),
+    Used(
+        #[bp(variant = VarInt)]
+        AwardStatisticItem
+    ),
+    Broken(
+        #[bp(variant = VarInt)]
+        AwardStatisticItem
+    ),
+    PickedUp(
+        #[bp(variant = VarInt)]
+        AwardStatisticItem
+    ),
+    Dropped(
+        #[bp(variant = VarInt)]
+        AwardStatisticItem
+    ),
+    Killed(
+        #[bp(variant = VarInt)]
+        AwardStatisticEntity
+    ),
+    KilledBy(
+        #[bp(variant = VarInt)]
+        AwardStatisticEntity
+    ),
+    Custom(AwardStatisticCustom),
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+#[bp(id = 0x4, state = Play, bound = Client)]
+pub struct AwardStatistics<'a> {
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, AwardStatistic, AwardStatistic>")]
+    pub statistics: Cow<'a, [AwardStatistic]>,
+    #[bp(variant = VarInt)]
+    pub value: i32,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x5, state = Play, bound = Client)]
+pub struct AcknowledgeBlockChange {
+    #[bp(variant = VarInt)]
+    pub sequence_id: i32,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x6, state = Play, bound = Client)]
+pub struct SetBlockDestroyStage {
+    #[bp(variant = VarInt)]
+    pub entity_id: i32,
+    #[bp(variant = BlockPosition)]
+    pub location: Vector3D<i32>,
+    pub destroy_stage: u8,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x7, state = Play, bound = Client)]
+pub struct BlockEntityData<'a> {
+    #[bp(variant = BlockPosition)]
+    pub location: Vector3D<i32>,
+    #[bp(variant = VarInt)]
+    pub ty: i32,
+    #[bp(variant = RemainingBytesArray)]
+    pub nbt_data: &'a [u8],
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = i32, variant = VarInt)]
+pub enum BlockActionVariant {
+    #[bp(
+        value = "(bird_data::block_data::NOTE_BLOCK.id) as i32",
+        ghost = (
+            (order = begin, value = 0u8),
+            (order = end, value = 0u8)
+        ),
+    )]
+    NoteBlock,
+    #[bp(
+        value = "(bird_data::block_data::PISTON.id) as i32",
+    )]
+    Piston {
+        retract: bool,
+    },
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x8, state = Play, bound = Client)]
+pub struct BlockAction {
+    #[bp(variant = BlockPosition)]
+    pub location: Vector3D<i32>,
+    pub variant: BlockActionVariant,
 }

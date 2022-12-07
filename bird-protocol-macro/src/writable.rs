@@ -1,7 +1,7 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{Data, DeriveInput, Field, Fields, parse_macro_input, Token, Variant};
-use crate::shared::{create_prepared_fields, create_prepared_variants, ObjectAttributes, parse_attributes};
+use crate::shared::{create_prepared_fields, create_prepared_variants, GhostValue, ObjectAttributes, parse_attributes};
 
 pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     let item: DeriveInput = syn::parse(item)?;
@@ -16,14 +16,14 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     let function_body = match data {
         Data::Struct(data_struct) => {
             let write_match = write_match(quote! { Self }, &data_struct.fields)?;
-            let write_fields = write_fields(data_struct.fields)?;
+            let write_fields = write_fields(data_struct.fields, object_attributes.ghost_values.into_iter())?;
             quote! { #write_match => { #write_fields }, }
         }
         Data::Enum(data_enum) => {
             let key_ty = object_attributes.key_ty.as_ref().ok_or_else(|| syn::Error::new(Span::call_site(), "You should provide key_ty for enum object"))?;
             let variants = create_prepared_variants(data_enum.variants.into_iter(), &object_attributes)?;
             let mut variant_matches = Vec::new();
-            for (variant, variant_value, _variant_attributes) in variants {
+            for (variant, variant_value, variant_attributes) in variants {
                 let Variant {
                     fields,
                     ident,
@@ -31,7 +31,10 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
                 } = variant;
                 let write_match = write_match(quote! { Self::#ident }, &fields)?;
                 let write_key = write_ts(&quote! { (#variant_value as #key_ty) }, key_ty, object_attributes.key_variant.as_ref());
-                let write_fields = write_fields(fields)?;
+                let write_fields = write_fields(
+                    fields,
+                    object_attributes.ghost_values.iter().cloned().chain(variant_attributes.ghost_values.into_iter()),
+                )?;
                 variant_matches.push(quote! { #write_match => { #write_key; #write_fields } });
             }
             quote! {
@@ -74,16 +77,11 @@ pub fn write_match(key: impl ToTokens, fields: &Fields) -> syn::Result<TokenStre
     })
 }
 
-pub fn write_fields(fields: Fields) -> syn::Result<TokenStream> {
-    let fields = create_prepared_fields(fields)?;
+pub fn write_fields(fields: Fields, ghost_values: impl Iterator<Item = GhostValue>) -> syn::Result<TokenStream> {
+    let fields = create_prepared_fields(fields, ghost_values)?;
     let mut writes_ts = Vec::new();
-    for (field, field_attrs) in fields {
-        let Field {
-            ident,
-            ty,
-            ..
-        } = field;
-        let write_ts = write_ts(&ident.unwrap(), &ty, field_attrs.variant.as_ref());
+    for (field_ident, field_value_expr, field_ty, field_variant) in fields {
+        let write_ts = write_ts(&field_value_expr.unwrap_or(field_ident), &field_ty, field_variant.as_ref());
         writes_ts.push(write_ts)
     }
     Ok(quote! { #(#writes_ts;)* })

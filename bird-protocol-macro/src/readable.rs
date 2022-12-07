@@ -1,7 +1,7 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{Data, DeriveInput, Field, Fields, parse_macro_input, Variant};
-use crate::shared::{create_prepared_fields, create_prepared_variants, ObjectAttributes, obligate_lifetime, parse_attributes};
+use crate::shared::{create_prepared_fields, create_prepared_variants, GhostValue, ObjectAttributes, obligate_lifetime, parse_attributes};
 
 pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     let item: DeriveInput = syn::parse(item)?;
@@ -15,21 +15,26 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     let object_attributes: ObjectAttributes = parse_attributes(&attrs, "bp")?;
     let (lifetime, spec_impl_generics) = obligate_lifetime(&mut generics)?;
     let function_body = match data {
-        Data::Struct(data_struct) => read_fields(data_struct.fields, quote! { Self }, &lifetime)?,
+        Data::Struct(data_struct) => read_fields(data_struct.fields, quote! { Self }, &lifetime, object_attributes.ghost_values.into_iter())?,
         Data::Enum(data_enum) => {
             let key_ty = object_attributes.key_ty.as_ref().ok_or_else(|| syn::Error::new(Span::call_site(), "You should provide key_ty for enum object"))?;
             let variants = create_prepared_variants(data_enum.variants.into_iter(), &object_attributes)?;
             let mut const_variant_values = Vec::new();
             let mut variant_matches = Vec::new();
             let mut const_match_value_counter = 0;
-            for (variant, variant_value, _variant_attributes) in variants {
+            for (variant, variant_value, variant_attributes) in variants {
                 let Variant {
                     fields,
                     ident,
                     ..
                 } = variant;
-                let variant_fields = read_fields(fields, quote! { Self:: #ident }, &lifetime)?;
-                let const_match_value = Ident::new(format!("__{}", const_match_value_counter).as_str(), Span::call_site());
+                let variant_fields = read_fields(
+                    fields,
+                    quote! { Self:: #ident },
+                    &lifetime,
+                    object_attributes.ghost_values.iter().cloned().chain(variant_attributes.ghost_values.into_iter()),
+                )?;
+                let const_match_value = Ident::new(format!("__C{}", const_match_value_counter).as_str(), Span::call_site());
                 const_match_value_counter += 1;
                 const_variant_values.push(quote! { const #const_match_value: #key_ty = #variant_value });
                 variant_matches.push(quote! {
@@ -58,7 +63,7 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     })
 }
 
-fn read_fields(fields: Fields, key: TokenStream, lifetime: &impl ToTokens) -> syn::Result<TokenStream> {
+fn read_fields(fields: Fields, key: TokenStream, lifetime: &impl ToTokens, ghost_values: impl Iterator<Item=GhostValue>) -> syn::Result<TokenStream> {
     let create_struct_ts = match fields {
         Fields::Unit => quote! { Ok(#key) },
         Fields::Unnamed(ref unnamed) => {
@@ -76,16 +81,11 @@ fn read_fields(fields: Fields, key: TokenStream, lifetime: &impl ToTokens) -> sy
             quote! { Ok(#key{#(#idents,)*}) }
         }
     };
-    let fields = create_prepared_fields(fields)?;
+    let fields = create_prepared_fields(fields, ghost_values)?;
     let mut variables_ts = Vec::new();
-    for (field, field_attribute) in fields {
-        let Field {
-            ident,
-            ty,
-            ..
-        } = field;
-        let read_ts = read_ts(&ty, lifetime, field_attribute.variant.as_ref());
-        variables_ts.push(quote! { let #ident = #read_ts; });
+    for (field_ident, _field_value_expr, field_ty, field_variant) in fields {
+        let read_ts = read_ts(&field_ty, lifetime, field_variant.as_ref());
+        variables_ts.push(quote! { let #field_ident = #read_ts; });
     }
     Ok(quote! {
         #(#variables_ts;)*

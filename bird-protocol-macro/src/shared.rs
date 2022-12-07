@@ -1,14 +1,15 @@
 use std::collections::HashMap;
-use std::mem::MaybeUninit;
+use std::mem::{discriminant, MaybeUninit};
 use std::str::FromStr;
 use either::Either;
 use proc_macro2::{Ident, Span, TokenStream, TokenTree};
 use quote::{quote, ToTokens};
-use syn::{Expr, ExprAssign, ExprPath, ExprType, Field, Fields, GenericParam, Generics, Lifetime, LifetimeDef, Lit, Token, Type, Variant};
+use syn::{Expr, ExprAssign, ExprPath, ExprTuple, ExprType, Field, Fields, GenericParam, Generics, Lifetime, LifetimeDef, Lit, Token, Type, Variant};
 use syn::parse::{Parse, ParseStream};
 use syn::parse::discouraged::Speculative;
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
+use syn::token::parsing::punct;
 use syn::token::Token;
 
 #[derive(Default)]
@@ -19,11 +20,28 @@ pub struct ObjectAttributes {
     pub packet_id: Option<TokenStream>,
     pub packet_bound: Option<TokenStream>,
     pub packet_state: Option<TokenStream>,
+    pub ghost_values: Vec<GhostValue>,
 }
 
 #[derive(Default)]
 pub struct VariantAttributes {
     pub key_value: Option<TokenStream>,
+    pub ghost_values: Vec<GhostValue>,
+}
+
+#[derive(Clone)]
+pub struct GhostValue {
+    pub order: GhostValueOrder,
+    pub value: TokenStream,
+    pub ty: Option<TokenStream>,
+    pub variant: Option<TokenStream>,
+}
+
+#[derive(Clone)]
+pub enum GhostValueOrder {
+    Begin,
+    End,
+    Order(u32, Span),
 }
 
 #[derive(Default)]
@@ -88,6 +106,34 @@ impl Attributes {
             }
             Some(expr) => Ok(Some(expr.to_token_stream())),
             None => Ok(None),
+        }
+    }
+
+    pub fn remove_ghost_values(&mut self, name: &String) -> syn::Result<Vec<GhostValue>> {
+        struct GhostValuesParse(Punctuated<GhostValue, Token![,]>);
+
+        impl Parse for GhostValuesParse {
+            fn parse(input: ParseStream) -> syn::Result<Self> {
+                let mut punctuated = Punctuated::new();
+                while !input.is_empty() {
+                    let expr_tuple: ExprTuple = input.parse()?;
+                    punctuated.push(syn::parse2(expr_tuple.elems.into_token_stream())?);
+                    if input.is_empty() {
+                        break;
+                    }
+                    punctuated.push_punct(input.parse()?);
+                }
+                Ok(Self(punctuated))
+            }
+        }
+
+        match self.remove_attribute(name) {
+            Some(Expr::Tuple(expr_tuple)) => {
+                let ghost_values: GhostValuesParse = syn::parse2(expr_tuple.elems.into_token_stream())?;
+                Ok(ghost_values.0.into_iter().collect())
+            },
+            Some(it) => Err(syn::Error::new(it.span(), "Must be tuple of tuples")),
+            None => Ok(Vec::new()),
         }
     }
 }
@@ -187,6 +233,33 @@ impl Parse for Attributes {
     }
 }
 
+impl Parse for GhostValue {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut attributes: Attributes = input.parse()?;
+        Ok(Self {
+            value: attributes.remove_attribute(&"value".into())
+                .map(|expr| expr.into_token_stream())
+                .ok_or_else(|| syn::Error::new(input.span(), "Value must be provided"))?,
+            ty: attributes.remove_ts_attribute(&"ty".into())?,
+            order: match attributes.remove_attribute(&"order".into()).ok_or_else(|| syn::Error::new(input.span(), "Order must be provided"))? {
+                Expr::Lit(lit) => match lit.lit {
+                    Lit::Int(int) => GhostValueOrder::Order(int.base10_parse().unwrap(), int.span()),
+                    _ => return Err(syn::Error::new(lit.span(), "Possible values are begin, end and order number")),
+                },
+                Expr::Path(path) => match path.path.is_ident("begin") {
+                    true => GhostValueOrder::Begin,
+                    false => match path.path.is_ident("end") {
+                        true => GhostValueOrder::End,
+                        false => return Err(syn::Error::new(path.span(), "Possible values are begin, end and order number")),
+                    }
+                },
+                it => return Err(syn::Error::new(it.span(), "Possible values are begin, end and order number")),
+            },
+            variant: attributes.remove_ts_attribute(&"variant".into())?,
+        })
+    }
+}
+
 impl Parse for ObjectAttributes {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut attributes: Attributes = input.parse()?;
@@ -197,6 +270,7 @@ impl Parse for ObjectAttributes {
             packet_id: attributes.remove_ts_attribute(&"id".into())?,
             packet_bound: attributes.remove_ts_attribute(&"bound".into())?,
             packet_state: attributes.remove_ts_attribute(&"state".into())?,
+            ghost_values: attributes.remove_ghost_values(&"ghost".into())?,
         })
     }
 }
@@ -206,6 +280,7 @@ impl Parse for VariantAttributes {
         let mut attributes: Attributes = input.parse()?;
         Ok(Self {
             key_value: attributes.remove_ts_attribute(&"value".into())?,
+            ghost_values: attributes.remove_ghost_values(&"ghost".into())?,
         })
     }
 }
@@ -245,8 +320,10 @@ pub fn parse_attributes<A: Parse + Default>(attrs: &Vec<syn::Attribute>, attr_na
         .unwrap_or_else(|| Ok(A::default()))
 }
 
-pub fn create_prepared_fields(fields: Fields) -> syn::Result<Vec<(Field, FieldAttributes)>> {
+pub fn create_prepared_fields(fields: Fields, ghost_values: impl Iterator<Item=GhostValue>) -> syn::Result<Vec<(TokenStream, Option<TokenStream>, TokenStream, Option<TokenStream>)>> {
     let mut counter = 0;
+    let mut begin = Vec::new();
+    let mut end = Vec::new();
     let mut ordered_fields = Vec::new();
     let mut specific_ordered_fields = HashMap::new();
     for mut field in fields {
@@ -255,22 +332,39 @@ pub fn create_prepared_fields(fields: Fields) -> syn::Result<Vec<(Field, FieldAt
             counter += 1;
         }
         let field_attributes: FieldAttributes = parse_attributes(&field.attrs, "bp")?;
+        let to_insert = (field.ident.unwrap().into_token_stream(), None, field.ty.into_token_stream(), field_attributes.variant);
         match field_attributes.order {
-            Some((order, span)) => if let Some(_) = specific_ordered_fields.insert(order, (field, field_attributes)) {
+            Some((order, span)) => if let Some(_) = specific_ordered_fields.insert(order, to_insert) {
                 return Err(syn::Error::new(span, "Repeated order value"));
             },
-            None => ordered_fields.push((field, field_attributes)),
+            None => ordered_fields.push(to_insert),
         }
     }
-    let mut specific_ordered_fields: Vec<(u32, (Field, FieldAttributes))> = specific_ordered_fields.into_iter().collect();
+    for ghost_value in ghost_values {
+        let to_insert = (quote! { _ }, Some(ghost_value.value), ghost_value.ty.unwrap_or_else(|| quote! { _ }), ghost_value.variant);
+        match ghost_value.order {
+            GhostValueOrder::Begin => begin.push(to_insert),
+            GhostValueOrder::End => end.push(to_insert),
+            GhostValueOrder::Order(order, span) => if let Some(_) = specific_ordered_fields.insert(order, to_insert) {
+                return Err(syn::Error::new(span, "Repeated order value"));
+            }
+        }
+    }
+    let mut specific_ordered_fields: Vec<_> = specific_ordered_fields.into_iter().collect();
     specific_ordered_fields.sort_by(|(first, _), (second, _)| first.cmp(second));
     for (order, obj) in specific_ordered_fields {
         ordered_fields.insert(order as usize, obj);
     }
+    for begin in begin.into_iter().rev() {
+        ordered_fields.insert(0, begin);
+    }
+    for end in end.into_iter() {
+        ordered_fields.push(end)
+    }
     Ok(ordered_fields)
 }
 
-pub fn create_prepared_variants(variants: impl Iterator<Item = Variant>, object_attributes: &ObjectAttributes) -> syn::Result<Vec<(Variant, TokenStream, VariantAttributes)>> {
+pub fn create_prepared_variants(variants: impl Iterator<Item=Variant>, object_attributes: &ObjectAttributes) -> syn::Result<Vec<(Variant, TokenStream, VariantAttributes)>> {
     let mut result = Vec::new();
     let mut previous_value = quote! { -1 };
     let key_ty = object_attributes.key_ty.as_ref().unwrap();

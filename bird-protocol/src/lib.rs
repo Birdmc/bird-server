@@ -33,6 +33,10 @@ pub struct Json;
 
 pub struct Nbt;
 
+pub struct Angle;
+
+pub struct BlockPosition;
+
 pub trait ProtocolLength {
     fn into_usize(self) -> usize;
 

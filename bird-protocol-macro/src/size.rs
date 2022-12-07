@@ -1,7 +1,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{Data, DeriveInput, Fields, Type};
-use crate::shared::{FieldAttributes, ObjectAttributes, parse_attributes};
+use crate::shared::{FieldAttributes, GhostValue, ObjectAttributes, parse_attributes, VariantAttributes};
 
 pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     let item: DeriveInput = syn::parse(item)?;
@@ -15,14 +15,18 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     let object_attributes: ObjectAttributes = parse_attributes(&attrs, "bp")?;
     let size = match data {
         Data::Struct(data_struct) => {
-            let (min, max) = fields_size(data_struct.fields)?;
+            let (min, max) = fields_size(data_struct.fields, object_attributes.ghost_values.into_iter())?;
             quote! { (#min .. #max) }
         }
         Data::Enum(data_enum) => {
             let mut min_variants_size = Vec::new();
             let mut max_variants_size = Vec::new();
             for variant in data_enum.variants {
-                let (min_variant_size, max_variant_size) = fields_size(variant.fields)?;
+                let variant_attributes: VariantAttributes = parse_attributes(&variant.attrs, "bp")?;
+                let (min_variant_size, max_variant_size) = fields_size(
+                    variant.fields,
+                    object_attributes.ghost_values.iter().cloned().chain(variant_attributes.ghost_values.into_iter())
+                )?;
                 min_variants_size.push(min_variant_size);
                 max_variants_size.push(max_variant_size);
             }
@@ -53,12 +57,25 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     })
 }
 
-pub fn fields_size(fields: Fields) -> syn::Result<(TokenStream, TokenStream)> {
+pub fn fields_size(fields: Fields, ghost_values: impl Iterator<Item=GhostValue>) -> syn::Result<(TokenStream, TokenStream)> {
     let mut min_size_types = Vec::new();
     let mut max_size_types = Vec::new();
+    let mut fields_with_attrs: Vec<(_, FieldAttributes)> = Vec::new();
     for field in fields {
-        let field_attributes: FieldAttributes = parse_attributes(&field.attrs, "bp")?;
-        let ty = field_attributes.variant.unwrap_or_else(|| field.ty.into_token_stream());
+        let field_attributes = parse_attributes(&field.attrs, "bp")?;
+        fields_with_attrs.push((field, field_attributes));
+    }
+    for ty in fields_with_attrs.into_iter()
+        .map(|(field, field_attributes)|
+            field_attributes.variant.unwrap_or_else(|| field.ty.into_token_stream())
+        )
+        .chain(ghost_values.into_iter().map(|ghost_value| ghost_value.variant
+            .or(ghost_value.ty)
+            .unwrap_or_else(|| {
+                let value = ghost_value.value;
+                quote! { bird_protocol::__private::size_of_val(&#value) }
+            })
+        )) {
         min_size_types.push(min_size_ts(&ty));
         max_size_types.push(max_size_ts(&ty));
     }

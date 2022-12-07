@@ -26,6 +26,10 @@ gen_u32_operation!(add_u32_without_overflow_array, add_u32_without_overflow, 0);
 gen_u32_operation!(max_u32_array, max_u32, u32::MAX);
 gen_u32_operation!(min_u32_array, min_u32, 0);
 
+pub const fn size_of_val<T: ProtocolSize>(_: &T) -> Range<u32> {
+    T::SIZE
+}
+
 pub const fn add_u32_without_overflow(first: u32, second: u32) -> u32 {
     match u32::MAX - first < second {
         true => u32::MAX,
@@ -171,6 +175,54 @@ macro_rules! var_number_impl {
                 }
             }
         )*
+    }
+}
+
+macro_rules! var_number_lower_nums_impl {
+    ($($ty: ty => $orig: ty = ($($lower_ty: ty$(,)*)*)$(,)*)*) => {
+        $($(
+            impl<'a> ProtocolVariantReadable<'a, $lower_ty> for $ty {
+                fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<$lower_ty> {
+                    let v: $orig = Self::read_variant(cursor)?;
+                    Ok(v as $lower_ty)
+                }
+            }
+
+            impl ProtocolVariantWritable<$lower_ty> for $ty {
+                fn write_variant<W: ProtocolWriter>(object: &$lower_ty, writer: &mut W) -> anyhow::Result<()> {
+                    Self::write_variant(&(*object as $orig))
+                }
+            }
+        )*)*
+    }
+}
+
+var_number_lower_nums_impl!(
+    VarInt => i32 = (i8, u8, i16, u16, u32),
+    VarLong => i64 = (i8, u8, i16, u16, i32, u32, u64)
+);
+
+impl<'a> ProtocolVariantReadable<'a, bool> for VarInt {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<bool> {
+        bool::read(cursor)
+    }
+}
+
+impl<'a> ProtocolVariantWritable<bool> for VarInt {
+    fn write_variant<W: ProtocolWriter>(object: &bool, writer: &mut W) -> anyhow::Result<()> {
+        object.write(writer)
+    }
+}
+
+impl<'a> ProtocolVariantReadable<'a, bool> for VarLong {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<bool> {
+        bool::read(cursor)
+    }
+}
+
+impl<'a> ProtocolVariantWritable<bool> for VarLong {
+    fn write_variant<W: ProtocolWriter>(object: &bool, writer: &mut W) -> anyhow::Result<()> {
+        object.write(writer)
     }
 }
 
@@ -644,6 +696,20 @@ impl<'a> ProtocolReadable<'a> for Identifier<'a> {
     }
 }
 
+delegate_size!(Angle = u8);
+
+impl ProtocolVariantWritable<f32> for Angle {
+    fn write_variant<W: ProtocolWriter>(object: &f32, writer: &mut W) -> anyhow::Result<()> {
+        ((*object * 256.0 / std::f32::consts::PI) as u8).write(writer)
+    }
+}
+
+impl<'a> ProtocolVariantReadable<'a, f32> for Angle {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<f32> {
+        Ok((u8::read(cursor)? as f32) * std::f32::consts::PI / 256.0)
+    }
+}
+
 fixed_range_size!(Nbt = (1, u32::MAX));
 
 #[cfg(feature = "fastnbt")]
@@ -660,6 +726,68 @@ mod fastnbt_impls {
         fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<T> {
             fastnbt::from_reader(ReadableProtocolCursor::new(cursor))
                 .map_err(|err| ProtocolError::Any(err.into()))
+        }
+    }
+}
+
+delegate_size!(BlockPosition = u64);
+
+#[cfg(feature = "euclid")]
+mod euclid_impls {
+    use super::*;
+    use euclid::*;
+
+    impl<T: ProtocolSize, U> ProtocolSize for Vector3D<T, U> {
+        const SIZE: Range<u32> = (
+            add_u32_without_overflow_array([T::SIZE.start; 3])..
+                add_u32_without_overflow_array([T::SIZE.end; 3])
+        );
+    }
+
+    impl<T: ProtocolWritable, U> ProtocolWritable for Vector3D<T, U> {
+        fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+            self.x.write(writer)?;
+            self.y.write(writer)?;
+            self.z.write(writer)
+        }
+    }
+
+    impl<U> ProtocolVariantWritable<Vector3D<i32, U>> for BlockPosition {
+        fn write_variant<W: ProtocolWriter>(object: &Vector3D<i32, U>, writer: &mut W) -> anyhow::Result<()> {
+            (((object.x as i64 & 0x3FFFFFF) << 38) |
+                ((object.z as i64 & 0x3FFFFFF) << 12) |
+                (object.y as i64 & 0xFFF)
+            ).write(writer)
+        }
+    }
+
+    impl<'a, T: ProtocolReadable<'a>, U: 'a> ProtocolReadable<'a> for Vector3D<T, U> {
+        fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+            Ok(Self {
+                x: T::read(cursor)?,
+                y: T::read(cursor)?,
+                z: T::read(cursor)?,
+                _unit: PhantomData,
+            })
+        }
+    }
+
+    impl<'a, U: 'a> ProtocolVariantReadable<'a, Vector3D<i32, U>> for BlockPosition {
+        fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Vector3D<i32, U>> {
+            let value = u64::read(cursor)?;
+            let mut x = (value >> 38) as i32;
+            let mut y = (value & 0xFFF) as i32;
+            let mut z = ((value >> 12) & 0x3FFFFFF) as i32;
+            if x >= 0x2000000 {
+                x -= 0x4000000
+            }
+            if y >= 0x800 {
+                y -= 0x1000
+            }
+            if z >= 0x2000000 {
+                z -= 0x4000000
+            }
+            Ok(Vector3D { x, y, z, _unit: PhantomData })
         }
     }
 }

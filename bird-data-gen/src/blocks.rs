@@ -218,7 +218,7 @@ pub fn generate_blocks(api: &Api) -> syn::Result<TokenStream> {
         #[derive(Clone, Copy, Debug, PartialEq)]
         pub enum Block { #(#blocks_enum_ts,)* }
 
-        mod block_data {
+        pub mod block_data {
             #(#blocks_const_data_ts)*
         }
 
