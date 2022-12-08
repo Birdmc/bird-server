@@ -30,11 +30,7 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
                 min_variants_size.push(min_variant_size);
                 max_variants_size.push(max_variant_size);
             }
-            let key_ty = object_attributes.key_variant
-                .or_else(|| object_attributes.key_ty)
-                .ok_or_else(|| syn::Error::new(Span::call_site(), "You must set ty or variant for key of your enum"))?;
-            let min_key = min_size_ts(&key_ty);
-            let max_key = max_size_ts(&key_ty);
+            let (min_key, max_key) = enum_key_size(&object_attributes)?;
             quote! { (
                 bird_protocol::__private::add_u32_without_overflow_array([
                     #min_key,
@@ -57,7 +53,18 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
     })
 }
 
+pub fn enum_key_size(object_attributes: &ObjectAttributes) -> syn::Result<(TokenStream, TokenStream)> {
+    let key_ty = object_attributes.key_variant.as_ref()
+        .or_else(|| object_attributes.key_ty.as_ref())
+        .ok_or_else(|| syn::Error::new(Span::call_site(), "You must set ty or variant for key of your enum"))?;
+    Ok((min_size_ts(&key_ty), max_size_ts(&key_ty)))
+}
+
 pub fn fields_size(fields: Fields, ghost_values: impl Iterator<Item=GhostValue>) -> syn::Result<(TokenStream, TokenStream)> {
+    enum Size {
+        Ty(TokenStream),
+        Val(TokenStream),
+    }
     let mut min_size_types = Vec::new();
     let mut max_size_types = Vec::new();
     let mut fields_with_attrs: Vec<(_, FieldAttributes)> = Vec::new();
@@ -67,17 +74,26 @@ pub fn fields_size(fields: Fields, ghost_values: impl Iterator<Item=GhostValue>)
     }
     for ty in fields_with_attrs.into_iter()
         .map(|(field, field_attributes)|
-            field_attributes.variant.unwrap_or_else(|| field.ty.into_token_stream())
+            Size::Ty(field_attributes.variant.unwrap_or_else(|| field.ty.into_token_stream()))
         )
         .chain(ghost_values.into_iter().map(|ghost_value| ghost_value.variant
             .or(ghost_value.ty)
+            .map(|v| Size::Ty(v))
             .unwrap_or_else(|| {
                 let value = ghost_value.value;
-                quote! { bird_protocol::__private::size_of_val(&#value) }
+                Size::Val(quote! { bird_protocol::__private::size_of_val(&#value) })
             })
         )) {
-        min_size_types.push(min_size_ts(&ty));
-        max_size_types.push(max_size_ts(&ty));
+        match ty {
+            Size::Ty(ty) => {
+                min_size_types.push(min_size_ts(&ty));
+                max_size_types.push(max_size_ts(&ty));
+            },
+            Size::Val(val) => {
+                min_size_types.push(quote! { #val.start });
+                max_size_types.push(quote! { #val.end });
+            }
+        }
     }
     Ok((
         quote! { bird_protocol::__private::add_u32_without_overflow_array([#(#min_size_types,)*]) },

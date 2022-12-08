@@ -30,12 +30,15 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
                     ..
                 } = variant;
                 let write_match = write_match(quote! { Self::#ident }, &fields)?;
-                let write_key = write_ts(&quote! { (#variant_value as #key_ty) }, key_ty, object_attributes.key_variant.as_ref());
+                let write_key = write_ts(&quote! { (#variant_value) }, key_ty, object_attributes.key_variant.as_ref());
                 let write_fields = write_fields(
                     fields,
                     object_attributes.ghost_values.iter().cloned().chain(variant_attributes.ghost_values.into_iter()),
                 )?;
-                variant_matches.push(quote! { #write_match => { #write_key; #write_fields } });
+                variant_matches.push(match object_attributes.key_reverse.0 {
+                    false => quote! { #write_match => { #write_key; #write_fields } },
+                    true => quote! { #write_match => { #write_fields #write_key; } }
+                });
             }
             quote! {
                 #(#variant_matches,)*
@@ -81,7 +84,7 @@ pub fn write_fields(fields: Fields, ghost_values: impl Iterator<Item = GhostValu
     let fields = create_prepared_fields(fields, ghost_values)?;
     let mut writes_ts = Vec::new();
     for (field_ident, field_value_expr, field_ty, field_variant) in fields {
-        let write_ts = write_ts(&field_value_expr.unwrap_or(field_ident), &field_ty, field_variant.as_ref());
+        let write_ts = write_ts(&field_value_expr.unwrap_or(field_ident), &field_ty.unwrap_or_else(|| quote! { _ }), field_variant.as_ref());
         writes_ts.push(write_ts)
     }
     Ok(quote! { #(#writes_ts;)* })

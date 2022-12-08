@@ -12,15 +12,30 @@ use syn::spanned::Spanned;
 use syn::token::parsing::punct;
 use syn::token::Token;
 
-#[derive(Default)]
 pub struct ObjectAttributes {
     pub key_variant: Option<TokenStream>,
     pub key_ty: Option<TokenStream>,
     pub key_increment: Option<TokenStream>,
+    pub key_reverse: (bool, Span),
     pub packet_id: Option<TokenStream>,
     pub packet_bound: Option<TokenStream>,
     pub packet_state: Option<TokenStream>,
     pub ghost_values: Vec<GhostValue>,
+}
+
+impl Default for ObjectAttributes {
+    fn default() -> Self {
+        Self {
+            key_variant: None,
+            key_ty: None,
+            key_increment: None,
+            key_reverse: (false, Span::call_site()),
+            packet_id: None,
+            packet_bound: None,
+            packet_state: None,
+            ghost_values: vec![]
+        }
+    }
 }
 
 #[derive(Default)]
@@ -128,13 +143,25 @@ impl Attributes {
         }
 
         match self.remove_attribute(name) {
-            Some(Expr::Tuple(expr_tuple)) => {
+            Some(Expr::Array(expr_tuple)) => {
                 let ghost_values: GhostValuesParse = syn::parse2(expr_tuple.elems.into_token_stream())?;
                 Ok(ghost_values.0.into_iter().collect())
             },
-            Some(it) => Err(syn::Error::new(it.span(), "Must be tuple of tuples")),
+            Some(it) => Err(syn::Error::new(it.span(), format!("Must be array of tuples"))),
             None => Ok(Vec::new()),
         }
+    }
+
+    pub fn remove_boolean_value(&mut self, name: &String, default_value: bool) -> syn::Result<(bool, Span)> {
+        let attr = self.remove_attribute(name);
+        match attr {
+            Some(Expr::Lit(ref lit)) => match lit.lit {
+                Lit::Bool(ref lit_bool) => Ok((lit_bool.value, lit_bool.span)),
+                _ => Err(()),
+            },
+            Some(_) => Err(()),
+            None => Ok((default_value, Span::call_site())),
+        }.map_err(|_| syn::Error::new(attr.unwrap().span(), "Must be boolean"))
     }
 }
 
@@ -267,6 +294,7 @@ impl Parse for ObjectAttributes {
             key_variant: attributes.remove_ts_attribute(&"variant".into())?,
             key_ty: attributes.remove_ts_attribute(&"ty".into())?,
             key_increment: attributes.remove_ts_attribute(&"increment".into())?,
+            key_reverse: attributes.remove_boolean_value(&"key_reverse".into(), false)?,
             packet_id: attributes.remove_ts_attribute(&"id".into())?,
             packet_bound: attributes.remove_ts_attribute(&"bound".into())?,
             packet_state: attributes.remove_ts_attribute(&"state".into())?,
@@ -320,7 +348,7 @@ pub fn parse_attributes<A: Parse + Default>(attrs: &Vec<syn::Attribute>, attr_na
         .unwrap_or_else(|| Ok(A::default()))
 }
 
-pub fn create_prepared_fields(fields: Fields, ghost_values: impl Iterator<Item=GhostValue>) -> syn::Result<Vec<(TokenStream, Option<TokenStream>, TokenStream, Option<TokenStream>)>> {
+pub fn create_prepared_fields(fields: Fields, ghost_values: impl Iterator<Item=GhostValue>) -> syn::Result<Vec<(TokenStream, Option<TokenStream>, Option<TokenStream>, Option<TokenStream>)>> {
     let mut counter = 0;
     let mut begin = Vec::new();
     let mut end = Vec::new();
@@ -332,7 +360,7 @@ pub fn create_prepared_fields(fields: Fields, ghost_values: impl Iterator<Item=G
             counter += 1;
         }
         let field_attributes: FieldAttributes = parse_attributes(&field.attrs, "bp")?;
-        let to_insert = (field.ident.unwrap().into_token_stream(), None, field.ty.into_token_stream(), field_attributes.variant);
+        let to_insert = (field.ident.unwrap().into_token_stream(), None, Some(field.ty.into_token_stream()), field_attributes.variant);
         match field_attributes.order {
             Some((order, span)) => if let Some(_) = specific_ordered_fields.insert(order, to_insert) {
                 return Err(syn::Error::new(span, "Repeated order value"));
@@ -341,7 +369,7 @@ pub fn create_prepared_fields(fields: Fields, ghost_values: impl Iterator<Item=G
         }
     }
     for ghost_value in ghost_values {
-        let to_insert = (quote! { _ }, Some(ghost_value.value), ghost_value.ty.unwrap_or_else(|| quote! { _ }), ghost_value.variant);
+        let to_insert = (quote! { _ }, Some(ghost_value.value), ghost_value.ty, ghost_value.variant);
         match ghost_value.order {
             GhostValueOrder::Begin => begin.push(to_insert),
             GhostValueOrder::End => end.push(to_insert),

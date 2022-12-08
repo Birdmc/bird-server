@@ -414,22 +414,59 @@ pub struct BlockEntityData<'a> {
 }
 
 #[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
-#[bp(ty = i32, variant = VarInt)]
+#[bp(ty = u8)]
+pub enum BlockActionVariantPistonDirection {
+    Down,
+    Up,
+    South,
+    West,
+    North,
+    East,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = u8)]
+pub enum BlockActionVariantBellDirection {
+    Down,
+    Up,
+    North,
+    South,
+    West,
+    East,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = i32, variant = VarInt, key_reverse = true)]
 pub enum BlockActionVariant {
-    #[bp(
-        value = "(bird_data::block_data::NOTE_BLOCK.id) as i32",
-        ghost = (
-            (order = begin, value = 0u8),
-            (order = end, value = 0u8)
-        ),
-    )]
+    #[bp(value = "(bird_data::block_data::NOTE_BLOCK.id) as i32", ghost = [(order = begin, value = 0u8), (order = end, value = 0u8)])]
     NoteBlock,
-    #[bp(
-        value = "(bird_data::block_data::PISTON.id) as i32",
-    )]
+    #[bp(value = "(bird_data::block_data::PISTON.id) as i32")]
     Piston {
         retract: bool,
+        direction: BlockActionVariantPistonDirection,
     },
+    #[bp(value = "(bird_data::block_data::CHEST.id) as i32", ghost = [(order = begin, value = 1u8)])]
+    Chest {
+        players_looking_in: u8,
+    },
+    #[bp(value = "(bird_data::block_data::ENDER_CHEST.id) as i32", ghost = [(order = begin, value = 1u8)])]
+    EnderChest {
+        players_looking_in: u8,
+    },
+    #[bp(value = "(bird_data::block_data::BEACON.id) as i32", ghost = [(order = begin, value = 1u8), (order = end, value = 0u8)])]
+    Beacon,
+    #[bp(value = "(bird_data::block_data::SPAWNER.id) as i32", ghost = [(order = begin, value = 1u8), (order = end, value = 0u8)])]
+    Spawner,
+    #[bp(value = "(bird_data::block_data::END_GATEWAY.id) as i32", ghost = [(order = begin, value = 1u8), (order = end, value = 0u8)])]
+    EndGateway,
+    #[bp(value = "(bird_data::block_data::SHULKER_BOX.id) as i32", ghost = [(order = begin, value = 1u8)])]
+    ShulkerBox {
+        players_looking_in: u8,
+    },
+    #[bp(value = "(bird_data::block_data::BELL.id) as i32", ghost = [(order = begin, value = 1u8)])]
+    Bell {
+        direction: BlockActionVariantBellDirection,
+    }
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]

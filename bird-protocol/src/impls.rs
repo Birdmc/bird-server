@@ -30,6 +30,16 @@ pub const fn size_of_val<T: ProtocolSize>(_: &T) -> Range<u32> {
     T::SIZE
 }
 
+#[inline]
+pub fn read_of_val<'a, T: ProtocolReadable<'a>, C: ProtocolCursor<'a>>(_: &T, cursor: &mut C) -> ProtocolResult<T> {
+    T::read(cursor)
+}
+
+#[inline]
+pub fn read_of_variant_val<'a, T, V: ProtocolVariantReadable<'a, T>, C: ProtocolCursor<'a>>(_: &T, cursor: &mut C) -> ProtocolResult<T> {
+    V::read_variant(cursor)
+}
+
 pub const fn add_u32_without_overflow(first: u32, second: u32) -> u32 {
     match u32::MAX - first < second {
         true => u32::MAX,
@@ -190,7 +200,7 @@ macro_rules! var_number_lower_nums_impl {
 
             impl ProtocolVariantWritable<$lower_ty> for $ty {
                 fn write_variant<W: ProtocolWriter>(object: &$lower_ty, writer: &mut W) -> anyhow::Result<()> {
-                    Self::write_variant(&(*object as $orig))
+                    Self::write_variant(&(*object as $orig), writer)
                 }
             }
         )*)*
@@ -287,7 +297,8 @@ pub fn write_str_with_limit<W: ProtocolWriter, const LIMIT: usize>(
 pub fn read_str_with_limit<'a, C: ProtocolCursor<'a>, const LIMIT: usize>(
     cursor: &mut C,
 ) -> ProtocolResult<&'a str> {
-    let length = VarInt::read_variant(cursor)? as usize;
+    let length: i32 = VarInt::read_variant(cursor)?;
+    let length = length as usize;
     match length <= LIMIT {
         true => from_utf8(cursor.take_bytes(length)?).map_err(|err| ProtocolError::Any(err.into())),
         false => Err(anyhow::Error::msg("Too long string").into()),

@@ -1,9 +1,12 @@
 use std::{ops::Range, marker::PhantomData};
 
 mod impls;
-mod stdimpls;
+mod std_impls;
+mod pub_impls;
 
-pub use crate::stdimpls::StdIOReadProtocolCursor as ReadableProtocolCursor;
+pub use pub_impls::*;
+
+pub use crate::std_impls::StdIOReadProtocolCursor as ReadableProtocolCursor;
 
 pub use anyhow;
 
