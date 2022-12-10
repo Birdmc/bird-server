@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::ops::Range;
+use bitfield_struct::bitfield;
 use euclid::default::Vector3D;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -7,6 +8,15 @@ use bird_chat::component::Component;
 use bird_chat::identifier::Identifier;
 use bird_protocol::{*, ProtocolPacketState::*, ProtocolPacketBound::*};
 use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolReadable, ProtocolSize, ProtocolWritable};
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+pub struct Slot<'a> {
+    #[bp(variant = VarInt)]
+    pub item_id: i32,
+    pub item_count: i8,
+    #[bp(variant = RemainingBytesArray)]
+    pub nbt: &'a [u8],
+}
 
 #[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
 #[bp(ty = i32, variant = VarInt)]
@@ -475,4 +485,145 @@ pub struct BlockAction {
     #[bp(variant = BlockPosition)]
     pub location: Vector3D<i32>,
     pub variant: BlockActionVariant,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x9, state = Play, bound = Client)]
+pub struct BlockUpdate {
+    #[bp(variant = BlockPosition)]
+    pub location: Vector3D<i32>,
+    #[bp(variant = VarInt)]
+    pub block_id: i32,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = i32, variant = VarInt)]
+pub enum BossBarColor {
+    Pink,
+    Blue,
+    Red,
+    Green,
+    Yellow,
+    Purple,
+    White,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = i32, variant = VarInt)]
+pub enum BossBarDivision {
+    Zero,
+    Six,
+    Ten,
+    Twelve,
+    Twenty,
+}
+
+#[bitfield(u8)]
+#[derive(ProtocolAll, PartialEq)]
+pub struct BossBarFlags {
+    pub dark_sky: bool,
+    pub dragon_bar: bool,
+    pub fog: bool,
+    #[bits(5)]
+    _pad: u8,
+}
+
+#[derive(ProtocolAll, Clone, PartialEq, Debug)]
+#[bp(ty = i32, variant = VarInt)]
+pub enum BossBarAction<'a> {
+    Add {
+        title: Component<'a>,
+        health: f32,
+        color: BossBarColor,
+        division: BossBarDivision,
+        flags: BossBarFlags,
+    },
+    Remove,
+    UpdateHealth {
+        health: f32,
+    },
+    UpdateTitle {
+        title: Component<'a>,
+    },
+    UpdateStyle {
+        color: BossBarColor,
+        division: BossBarDivision,
+    },
+    UpdateFlags {
+        flags: BossBarFlags,
+    }
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+#[bp(id = 0xA, state = Play, bound = Client)]
+pub struct BossBar<'a> {
+    pub uuid: Uuid,
+    pub action: BossBarAction<'a>,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = u8)]
+pub enum Difficulty {
+    Peaceful,
+    Easy,
+    Normal,
+    Hard,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0xB, state = Play, bound = Client)]
+pub struct ChangeDifficulty {
+    pub difficulty: Difficulty,
+    pub locked: bool,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+#[bp(id = 0xC, state = Play, bound = Client)]
+pub struct ChatPreviewC<'a> {
+    pub query_id: i32,
+    pub message: Option<Component<'a>>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0xD, state = Play, bound = Client)]
+pub struct ClearTitles {
+    pub reset: bool,
+}
+
+#[derive(ProtocolAll, Clone, PartialEq, Debug)]
+pub struct CommandSuggestionsMatch<'a> {
+    pub insert: &'a str,
+    pub tooltip: Option<Component<'a>>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+#[bp(id = 0xE, state = Play, bound = Client)]
+pub struct CommandSuggestionsResponse<'a> {
+    #[bp(variant = VarInt)]
+    pub id: i32,
+    #[bp(variant = VarInt)]
+    pub start: i32,
+    #[bp(variant = VarInt)]
+    pub length: i32,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, CommandSuggestionsMatch<'a>, CommandSuggestionsMatch<'a>>")]
+    pub matches: Cow<'a, [CommandSuggestionsMatch<'a>]>,
+}
+
+pub const PLAYER_INVENTORY_ID: u8 = 0;
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x10, state = Play, bound = Client)]
+pub struct CloseContainer {
+    pub window_id: u8,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+#[bp(id = 0x11, state = Play, bound = Client)]
+pub struct SetContainerContent<'a> {
+    pub window_id: u8,
+    #[bp(variant = VarInt)]
+    pub state_id: i32,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, Option<Slot<'a>>, Option<Slot<'a>>>")]
+    pub slot_data: Cow<'a, [Option<Slot<'a>>]>,
+    pub carried_item: Option<Slot<'a>>,
 }

@@ -27,3 +27,6 @@ features = ["serde"]
 
 [dependencies.euclid]
 version = "0.22.7"
+
+[dependencies.bitfield-struct]
+version = "0.1.8"

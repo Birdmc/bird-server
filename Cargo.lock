@@ -77,10 +77,22 @@ dependencies = [
  "bird-chat",
  "bird-data",
  "bird-protocol",
+ "bitfield-struct",
  "either",
  "euclid",
  "serde",
  "uuid",
+]
+
+[[package]]
+name = "bitfield-struct"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32d03926c42da50950a05787410db34aa0f61c4ab7b3ecc174fd8d37428f7921"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
