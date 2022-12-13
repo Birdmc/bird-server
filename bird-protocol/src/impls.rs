@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::*;
 
 macro_rules! gen_u32_operation {
-    ($new_name: ident, $func: ident, $default_value: expr) => {
-        pub const fn $new_name<const N: usize>(array: [u32; N]) -> u32 {
+    ($ty: ty, $new_name: ident, $func: ident, $default_value: expr) => {
+        pub const fn $new_name<const N: usize>(array: [$ty; N]) -> $ty {
             if array.len() == 0 { return $default_value; }
             let mut counter = 1;
             let mut value = array[0];
@@ -22,9 +22,20 @@ macro_rules! gen_u32_operation {
     }
 }
 
-gen_u32_operation!(add_u32_without_overflow_array, add_u32_without_overflow, 0);
-gen_u32_operation!(max_u32_array, max_u32, u32::MAX);
-gen_u32_operation!(min_u32_array, min_u32, 0);
+gen_u32_operation!(u32, add_u32_without_overflow_array, add_u32_without_overflow, 0);
+gen_u32_operation!(u32, max_u32_array, max_u32, u32::MAX);
+gen_u32_operation!(u32, min_u32_array, min_u32, 0);
+gen_u32_operation!((u32, u32), add_protocol_sizes, add_u32_range_without_overflow, (0, 0));
+
+#[macro_export]
+macro_rules! add_protocol_sizes_ty {
+    ($($ty: ty$(,)*)*) => {
+        {
+            let o = $crate::add_protocol_sizes([$((<$ty as $crate::ProtocolSize>::SIZE.start, <$ty as $crate::ProtocolSize>::SIZE.end),)*]);
+            (o.0..o.1)
+        }
+    }
+}
 
 pub const fn size_of_val<T: ProtocolSize>(_: &T) -> Range<u32> {
     T::SIZE
@@ -38,6 +49,10 @@ pub fn read_of_val<'a, T: ProtocolReadable<'a>, C: ProtocolCursor<'a>>(_: &T, cu
 #[inline]
 pub fn read_of_variant_val<'a, T, V: ProtocolVariantReadable<'a, T>, C: ProtocolCursor<'a>>(_: &T, cursor: &mut C) -> ProtocolResult<T> {
     V::read_variant(cursor)
+}
+
+pub const fn add_u32_range_without_overflow(first: (u32, u32), second: (u32, u32)) -> (u32, u32) {
+    (add_u32_without_overflow(first.0, second.0), add_u32_without_overflow(first.1, second.1))
 }
 
 pub const fn add_u32_without_overflow(first: u32, second: u32) -> u32 {
@@ -802,3 +817,40 @@ mod euclid_impls {
         }
     }
 }
+
+impl<T, const N: u8> ProtocolSize for FixedPointNumber<T, N>
+    where T: ProtocolSize {
+    const SIZE: Range<u32> = T::SIZE;
+}
+
+macro_rules! fixed_point_number_impl {
+    ($($ty: ty$(,)*)*) => {
+        $(
+        impl<'a, const N: u8> ProtocolVariantReadable<'a, f32> for FixedPointNumber<$ty, N> {
+            fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<f32> {
+                Ok((<$ty>::read(cursor)? as f32) / (1 << N) as f32)
+            }
+        }
+
+        impl<'a, const N: u8> ProtocolVariantReadable<'a, f64> for FixedPointNumber<$ty, N> {
+            fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<f64> {
+                Ok((<$ty>::read(cursor)? as f64) / (1 << N) as f64)
+            }
+        }
+
+        impl<const N: u8> ProtocolVariantWritable<f32> for FixedPointNumber<$ty, N> {
+            fn write_variant<W: ProtocolWriter>(object: &f32, writer: &mut W) -> anyhow::Result<()> {
+                ((*object * (1 << N) as f32) as $ty).write(writer)
+            }
+        }
+
+        impl<const N: u8> ProtocolVariantWritable<f64> for FixedPointNumber<$ty, N> {
+            fn write_variant<W: ProtocolWriter>(object: &f64, writer: &mut W) -> anyhow::Result<()> {
+                ((*object * (1 << N) as f64) as $ty).write(writer)
+            }
+        }
+        )*
+    }
+}
+
+fixed_point_number_impl!(i16, u16, i32, u32, i64, u64);

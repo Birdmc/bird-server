@@ -15,6 +15,8 @@ pub mod __private {
     pub use crate::impls::*;
 }
 
+pub use crate::impls::add_protocol_sizes;
+
 #[cfg(feature = "derive")]
 pub mod derive {
     pub use bird_protocol_macro::*;
@@ -39,6 +41,8 @@ pub struct Nbt;
 pub struct Angle;
 
 pub struct BlockPosition;
+
+pub struct FixedPointNumber<T, const N: u8>(PhantomData<T>,);
 
 pub trait ProtocolLength {
     fn into_usize(self) -> usize;
