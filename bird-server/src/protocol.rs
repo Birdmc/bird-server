@@ -1102,3 +1102,109 @@ pub enum EntityEventStatus {
 pub struct EntityEventPS2C {
     pub entity_id: i32,
 }
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x1B, state = Play, bound = Client)]
+pub struct ExplosionPS2C<'a> {
+    pub location: Vector3D<f32>,
+    pub strength: f32,
+    #[bp(variant = "LengthProvidedRawArray<i32, VarInt, Vector3D<i8>, Vector3D<i8>>")]
+    pub records: &'a [Vector3D<i8>],
+    pub motion: Vector3D<f32>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x1C, state = Play, bound = Client)]
+pub struct UnloadChunkPS2C {
+    pub chunk_x: i32,
+    pub chunk_z: i32,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = f32)]
+pub enum GameEventGameMode {
+    Survival,
+    Creative,
+    Adventure,
+    Spectator,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = f32)]
+pub enum GameEventDemo {
+    ShowWelcome,
+    #[bp(value = 101f32)]
+    TellMovementControls,
+    TellJumpControl,
+    TellInventoryControl,
+    TellDemoIsOver,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = f32)]
+pub enum GameEventWinGame {
+    RespawnPlayer,
+    RollTheCredits,
+}
+
+#[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
+#[bp(ty = f32)]
+pub enum GameEventRespawnScreen {
+    EnableScreen,
+    ImmediatelyRespawn,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x1D, state = Play, bound = Client, ty = u8)]
+pub enum GameEventPS2C {
+    #[bp(ghost = [(order = begin, value = 0f32)])]
+    NoRespawnBlockAvailable,
+    #[bp(ghost = [(order = begin, value = 0f32)])]
+    EndRaining,
+    #[bp(ghost = [(order = begin, value = 0f32)])]
+    BeginRaining,
+    ChangeGameMode(GameEventGameMode),
+    WinGame(GameEventWinGame),
+    DemoEvent(GameEventDemo),
+    #[bp(ghost = [(order = begin, value = 0f32)])]
+    ArrowHitPlayer,
+    RainLevelChange(f32),
+    ThunderLevelChange(f32),
+    #[bp(ghost = [(order = begin, value = 0f32)])]
+    PufferfishSting,
+    #[bp(ghost = [(order = begin, value = 0f32)])]
+    ElderGuardianMobAppearance,
+    EnableRespawnScreen(GameEventRespawnScreen),
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x1E, state = Play, bound = Client)]
+pub struct OpenHorseScreenPS2C {
+    pub window_id: u8,
+    #[bp(variant = VarInt)]
+    pub slots: i32,
+    pub entity_id: i32,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x1E, state = Play, bound = Client)]
+pub struct InitializeWorldBorderPS2C {
+    pub x: f64,
+    pub y: f64,
+    pub old_diameter: f64,
+    pub new_diameter: f64,
+    #[bp(variant = VarLong)]
+    pub speed: i64,
+    #[bp(variant = VarInt)]
+    pub portal_teleport_boundary: i32,
+    #[bp(variant = VarInt)]
+    pub warning_blocks: i32,
+    #[bp(variant = VarInt)]
+    pub warning_seconds: i32,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x1F, state = Play, bound = Client)]
+pub struct KeepAlivePS2C {
+    pub keep_alive_id: i64,
+}

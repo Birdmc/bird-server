@@ -1,11 +1,32 @@
 use std::{borrow::Cow, str::from_utf8};
+use euclid::{Vector2D, Vector3D};
 use bird_chat::component::Component;
 use bird_chat::identifier::{Identifier, IdentifierInner};
+use bird_util::*;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::*;
+
+macro_rules! protocol_raw {
+    ($($ty: ty$(,)+)*) => {
+        $(unsafe impl ProtocolRaw for $ty {})*
+    }
+}
+
+protocol_raw!(u8, i8, bool,);
+
+#[cfg(target_endian = "big")]
+protocol_raw!(u16, i16, u32, i32, u64, i64, u128, i128);
+
+unsafe impl<U> ProtocolRaw for Vector3D<u8, U> {}
+
+unsafe impl<U> ProtocolRaw for Vector3D<i8, U> {}
+
+unsafe impl<U> ProtocolRaw for Vector2D<u8, U> {}
+
+unsafe impl<U> ProtocolRaw for Vector2D<i8, U> {}
 
 macro_rules! gen_u32_operation {
     ($ty: ty, $new_name: ident, $func: ident, $default_value: expr) => {
@@ -366,121 +387,12 @@ impl<'a> ProtocolReadable<'a> for Cow<'a, str> {
     }
 }
 
-impl ProtocolSize for RemainingBytesArray {
-    const SIZE: Range<u32> = (0..u32::MAX);
+const fn byte_array_into_t_array<T: Sized>(array: &[u8]) -> &[T] {
+    unsafe { std::slice::from_raw_parts(array.as_ptr() as *const T, array.len() / std::mem::size_of::<T>()) }
 }
 
-impl ProtocolVariantWritable<[u8]> for RemainingBytesArray {
-    fn write_variant<W: ProtocolWriter>(object: &[u8], writer: &mut W) -> anyhow::Result<()> {
-        Ok(writer.write_bytes(object))
-    }
-}
-
-impl<'a> ProtocolVariantWritable<&'a [u8]> for RemainingBytesArray {
-    fn write_variant<W: ProtocolWriter>(object: &&'a [u8], writer: &mut W) -> anyhow::Result<()> {
-        Self::write_variant(*object, writer)
-    }
-}
-
-impl ProtocolVariantWritable<Vec<u8>> for RemainingBytesArray {
-    fn write_variant<W: ProtocolWriter>(object: &Vec<u8>, writer: &mut W) -> anyhow::Result<()> {
-        Self::write_variant(object.as_slice(), writer)
-    }
-}
-
-impl ProtocolVariantWritable<Cow<'_, [u8]>> for RemainingBytesArray {
-    fn write_variant<W: ProtocolWriter>(
-        object: &Cow<'_, [u8]>,
-        writer: &mut W,
-    ) -> anyhow::Result<()> {
-        Self::write_variant(
-            match object {
-                Cow::Owned(owned) => owned.as_slice(),
-                Cow::Borrowed(borrowed) => borrowed,
-            },
-            writer,
-        )
-    }
-}
-
-impl<'a> ProtocolVariantReadable<'a, &'a [u8]> for RemainingBytesArray {
-    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<&'a [u8]> {
-        cursor.take_bytes(cursor.remaining_bytes())
-    }
-}
-
-impl<'a> ProtocolVariantReadable<'a, Vec<u8>> for RemainingBytesArray {
-    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Vec<u8>> {
-        Self::read_variant(cursor).map(|slice: &'a [u8]| slice.into())
-    }
-}
-
-impl<'a> ProtocolVariantReadable<'a, Cow<'a, [u8]>> for RemainingBytesArray {
-    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Cow<'a, [u8]>> {
-        Self::read_variant(cursor).map(|slice| Cow::Borrowed(slice))
-    }
-}
-
-impl<V, VV: ProtocolSize> ProtocolSize for RemainingArray<V, VV> {
-    const SIZE: Range<u32> = (0..u32::MAX);
-}
-
-impl<V, VV: ProtocolVariantWritable<V>> ProtocolVariantWritable<[V]> for RemainingArray<V, VV> {
-    fn write_variant<W: ProtocolWriter>(object: &[V], writer: &mut W) -> anyhow::Result<()> {
-        for value in object {
-            VV::write_variant(value, writer)?
-        }
-        Ok(())
-    }
-}
-
-impl<'a, V, VV: ProtocolVariantWritable<V>> ProtocolVariantWritable<&'a [V]> for RemainingArray<V, VV> {
-    fn write_variant<W: ProtocolWriter>(object: &&'a [V], writer: &mut W) -> anyhow::Result<()> {
-        Self::write_variant(*object, writer)
-    }
-}
-
-impl<V, VV: ProtocolVariantWritable<V>> ProtocolVariantWritable<Vec<V>> for RemainingArray<V, VV> {
-    fn write_variant<W: ProtocolWriter>(object: &Vec<V>, writer: &mut W) -> anyhow::Result<()> {
-        Self::write_variant(object.as_slice(), writer)
-    }
-}
-
-impl<V: Clone, VV: ProtocolVariantWritable<V>> ProtocolVariantWritable<Cow<'_, [V]>>
-for RemainingArray<V, VV>
-{
-    fn write_variant<W: ProtocolWriter>(
-        object: &Cow<'_, [V]>,
-        writer: &mut W,
-    ) -> anyhow::Result<()> {
-        Self::write_variant(
-            match object {
-                Cow::Owned(owned) => owned.as_slice(),
-                Cow::Borrowed(borrowed) => *borrowed,
-            },
-            writer,
-        )
-    }
-}
-
-impl<'a, V: 'a, VV: ProtocolVariantReadable<'a, V>> ProtocolVariantReadable<'a, Vec<V>>
-for RemainingArray<V, VV>
-{
-    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Vec<V>> {
-        let mut result = Vec::new();
-        while cursor.remaining_bytes() != 0 {
-            result.push(VV::read_variant(cursor)?);
-        }
-        Ok(result)
-    }
-}
-
-impl<'a, V: 'a + Clone, VV: ProtocolVariantReadable<'a, V>>
-ProtocolVariantReadable<'a, Cow<'static, [V]>> for RemainingArray<V, VV>
-{
-    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Cow<'static, [V]>> {
-        Self::read_variant(cursor).map(|vec| Cow::Owned(vec))
-    }
+const fn t_array_into_byte_array<T: Sized>(array: &[T]) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(array.as_ptr() as *const u8, array.len() * std::mem::size_of::<T>()) }
 }
 
 macro_rules! primitive_length {
@@ -501,38 +413,89 @@ macro_rules! primitive_length {
 
 primitive_length!(i8 u8 i16 u16 i32 u32 i64 u64 i128 u128);
 
-impl<L, LV: ProtocolSize> ProtocolSize for LengthProvidedBytesArray<L, LV> {
-    const SIZE: Range<u32> = (LV::SIZE.start..u32::MAX);
-}
-
-impl<L: ProtocolLength, LV: ProtocolVariantWritable<L>> ProtocolVariantWritable<[u8]>
-for LengthProvidedBytesArray<L, LV>
-{
-    fn write_variant<W: ProtocolWriter>(object: &[u8], writer: &mut W) -> anyhow::Result<()> {
-        LV::write_variant(&L::from_usize(object.len()), writer)?;
-        Ok(writer.write_bytes(object))
+impl<'a, L: ProtocolLength, LV: ProtocolVariantReadable<'a, L>> ProtocolVariantReadable<'a, usize> for ProtocolLengthProvidedDeterminer<L, LV> {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<usize> {
+        LV::read_variant(cursor).map(|l| l.into_usize())
     }
 }
 
-impl<'a, L: ProtocolLength, LV: ProtocolVariantWritable<L>> ProtocolVariantWritable<&'a [u8]> for LengthProvidedBytesArray<L, LV> {
-    fn write_variant<W: ProtocolWriter>(object: &&'a [u8], writer: &mut W) -> anyhow::Result<()> {
+impl<L, LV: ProtocolSize> ProtocolSize for ProtocolLengthProvidedDeterminer<L, LV> { const SIZE: Range<u32> = LV::SIZE; }
+
+impl<L: ProtocolLength, LV: ProtocolVariantWritable<L>> ProtocolVariantWritable<usize> for ProtocolLengthProvidedDeterminer<L, LV> {
+    fn write_variant<W: ProtocolWriter>(object: &usize, writer: &mut W) -> anyhow::Result<()> {
+        LV::write_variant(&L::from_usize(*object), writer)
+    }
+}
+
+impl<'a, L: ProtocolLength, LV: ProtocolVariantReadable<'a, L> + ProtocolVariantWritable<L> + ProtocolSize> ProtocolLengthDeterminer<'a> for ProtocolLengthProvidedDeterminer<L, LV> {
+    const ELEMENT_COUNT: bool = true;
+}
+
+impl<'a> ProtocolVariantReadable<'a, usize> for ProtocolLengthRemainingDeterminer {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<usize> {
+        Ok(cursor.remaining_bytes())
+    }
+}
+
+impl ProtocolSize for ProtocolLengthRemainingDeterminer { const SIZE: Range<u32> = (0..0); }
+
+impl ProtocolVariantWritable<usize> for ProtocolLengthRemainingDeterminer {
+    fn write_variant<W: ProtocolWriter>(object: &usize, writer: &mut W) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> ProtocolLengthDeterminer<'a> for ProtocolLengthRemainingDeterminer {
+    const ELEMENT_COUNT: bool = false;
+}
+
+impl<'a, const N: usize> ProtocolVariantReadable<'a, usize> for ProtocolLengthConstDeterminer<N> {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<usize> {
+        Ok(N)
+    }
+}
+
+impl<const N: usize> ProtocolSize for ProtocolLengthConstDeterminer<N> { const SIZE: Range<u32> = (0..0); }
+
+impl<const N: usize> ProtocolVariantWritable<usize> for ProtocolLengthConstDeterminer<N> {
+    fn write_variant<W: ProtocolWriter>(object: &usize, writer: &mut W) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a, const N: usize> ProtocolLengthDeterminer<'a> for ProtocolLengthConstDeterminer<N> {
+    const ELEMENT_COUNT: bool = true;
+}
+
+impl<'a, V, VV, T: ProtocolLengthDeterminer<'a>> ProtocolSize for LengthFunctionRawArray<V, VV, T> {
+    const SIZE: Range<u32> = (T::SIZE.start..u32::MAX);
+}
+
+impl<'a, V: Sized, VV: ProtocolRaw, T: ProtocolLengthDeterminer<'a>> ProtocolVariantWritable<[V]>
+for LengthFunctionRawArray<V, VV, T>
+{
+    fn write_variant<W: ProtocolWriter>(object: &[V], writer: &mut W) -> anyhow::Result<()> {
+        T::write_variant(&(object.len() * if T::ELEMENT_COUNT { 1 } else { std::mem::size_of::<V>() }), writer)?;
+        Ok(writer.write_bytes(t_array_into_byte_array(object)))
+    }
+}
+
+impl<'a, V: Sized, VV: ProtocolRaw, T: ProtocolLengthDeterminer<'a>> ProtocolVariantWritable<&'a [V]> for LengthFunctionRawArray<V, VV, T> {
+    fn write_variant<W: ProtocolWriter>(object: &&'a [V], writer: &mut W) -> anyhow::Result<()> {
         Self::write_variant(*object, writer)
     }
 }
 
-impl<L: ProtocolLength, LV: ProtocolVariantWritable<L>> ProtocolVariantWritable<Vec<u8>>
-for LengthProvidedBytesArray<L, LV>
-{
-    fn write_variant<W: ProtocolWriter>(object: &Vec<u8>, writer: &mut W) -> anyhow::Result<()> {
+impl<'a, V: Sized, VV: ProtocolRaw, T: ProtocolLengthDeterminer<'a>> ProtocolVariantWritable<Vec<V>> for LengthFunctionRawArray<V, VV, T> {
+    fn write_variant<W: ProtocolWriter>(object: &Vec<V>, writer: &mut W) -> anyhow::Result<()> {
         Self::write_variant(object.as_slice(), writer)
     }
 }
 
-impl<L: ProtocolLength, LV: ProtocolVariantWritable<L>> ProtocolVariantWritable<Cow<'_, [u8]>>
-for LengthProvidedBytesArray<L, LV>
+impl<'a, V: Sized + Clone, VV: ProtocolRaw, T: ProtocolLengthDeterminer<'a>> ProtocolVariantWritable<Cow<'_, [V]>> for LengthFunctionRawArray<V, VV, T>
 {
     fn write_variant<W: ProtocolWriter>(
-        object: &Cow<'_, [u8]>,
+        object: &Cow<'_, [V]>,
         writer: &mut W,
     ) -> anyhow::Result<()> {
         Self::write_variant(
@@ -545,40 +508,38 @@ for LengthProvidedBytesArray<L, LV>
     }
 }
 
-impl<'a, L: ProtocolLength, LV: ProtocolVariantReadable<'a, L>>
-ProtocolVariantReadable<'a, &'a [u8]> for LengthProvidedBytesArray<L, LV>
+impl<'a, V: Sized, VV: ProtocolRaw, T: ProtocolLengthDeterminer<'a>> ProtocolVariantReadable<'a, &'a [V]> for LengthFunctionRawArray<V, VV, T>
 {
-    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<&'a [u8]> {
-        let length = L::into_usize(LV::read_variant(cursor)?);
-        cursor.take_bytes(length)
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<&'a [V]> {
+        let length = T::read_variant(cursor)? / if T::ELEMENT_COUNT { 1 } else { std::mem::size_of::<V>() };
+        Ok(byte_array_into_t_array(cursor.take_bytes(length)?))
     }
 }
 
-impl<'a, L: ProtocolLength, LV: ProtocolVariantReadable<'a, L>> ProtocolVariantReadable<'a, Vec<u8>>
-for LengthProvidedBytesArray<L, LV>
+impl<'a, V: Sized + Clone + 'a, VV: ProtocolRaw, T: ProtocolLengthDeterminer<'a>> ProtocolVariantReadable<'a, Vec<V>> for LengthFunctionRawArray<V, VV, T>
 {
-    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Vec<u8>> {
-        Self::read_variant(cursor).map(|slice: &'a [u8]| slice.into())
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Vec<V>> {
+        Self::read_variant(cursor).map(|slice: &'a [V]| slice.into())
     }
 }
 
-impl<'a, L: ProtocolLength, LV: ProtocolVariantReadable<'a, L>>
-ProtocolVariantReadable<'a, Cow<'a, [u8]>> for LengthProvidedBytesArray<L, LV>
+impl<'a, V: Sized, VV: ProtocolRaw, T: ProtocolLengthDeterminer<'a>> ProtocolVariantReadable<'a, Cow<'a, [V]>> for LengthFunctionRawArray<V, VV, T>
+    where [V]: ToOwned
 {
-    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Cow<'a, [u8]>> {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Cow<'a, [V]>> {
         Self::read_variant(cursor).map(|slice| Cow::Borrowed(slice))
     }
 }
 
-impl<L, LV: ProtocolSize, V, VV> ProtocolSize for LengthProvidedArray<L, LV, V, VV> {
-    const SIZE: Range<u32> = (LV::SIZE.start..u32::MAX);
+impl<'a, V, VV, T: ProtocolLengthDeterminer<'a>> ProtocolSize for LengthFunctionArray<V, VV, T> {
+    const SIZE: Range<u32> = (T::SIZE.start..u32::MAX);
 }
 
-impl<L: ProtocolLength, LV: ProtocolVariantWritable<L>, V, VV: ProtocolVariantWritable<V>>
-ProtocolVariantWritable<[V]> for LengthProvidedArray<L, LV, V, VV>
+impl<'a, V, VV: ProtocolVariantWritable<V>, T: ProtocolLengthDeterminer<'a>> ProtocolVariantWritable<[V]> for LengthFunctionArray<V, VV, T>
+    where ConstAssert<{ T::ELEMENT_COUNT }>: ConstAssertTrue
 {
     fn write_variant<W: ProtocolWriter>(object: &[V], writer: &mut W) -> anyhow::Result<()> {
-        LV::write_variant(&L::from_usize(object.len()), writer)?;
+        T::write_variant(&object.len(), writer)?;
         for value in object {
             VV::write_variant(value, writer)?;
         }
@@ -586,8 +547,8 @@ ProtocolVariantWritable<[V]> for LengthProvidedArray<L, LV, V, VV>
     }
 }
 
-impl<L: ProtocolLength, LV: ProtocolVariantWritable<L>, V, VV: ProtocolVariantWritable<V>>
-ProtocolVariantWritable<Vec<V>> for LengthProvidedArray<L, LV, V, VV>
+impl<'a, V, VV: ProtocolVariantWritable<V>, T: ProtocolLengthDeterminer<'a>> ProtocolVariantWritable<Vec<V>> for LengthFunctionArray<V, VV, T>
+    where ConstAssert<{ T::ELEMENT_COUNT }>: ConstAssertTrue
 {
     fn write_variant<W: ProtocolWriter>(object: &Vec<V>, writer: &mut W) -> anyhow::Result<()> {
         Self::write_variant(object.as_slice(), writer)
@@ -595,11 +556,12 @@ ProtocolVariantWritable<Vec<V>> for LengthProvidedArray<L, LV, V, VV>
 }
 
 impl<
-    L: ProtocolLength,
-    LV: ProtocolVariantWritable<L>,
+    'a,
     V: Clone,
     VV: ProtocolVariantWritable<V>,
-> ProtocolVariantWritable<Cow<'_, [V]>> for LengthProvidedArray<L, LV, V, VV>
+    T: ProtocolLengthDeterminer<'a>
+> ProtocolVariantWritable<Cow<'_, [V]>> for LengthFunctionArray<V, VV, T>
+    where ConstAssert<{ T::ELEMENT_COUNT }>: ConstAssertTrue
 {
     fn write_variant<W: ProtocolWriter>(
         object: &Cow<'_, [V]>,
@@ -617,14 +579,14 @@ impl<
 
 impl<
     'a,
-    L: ProtocolLength,
-    LV: ProtocolVariantReadable<'a, L>,
     V: 'a,
     VV: ProtocolVariantReadable<'a, V>,
-> ProtocolVariantReadable<'a, Vec<V>> for LengthProvidedArray<L, LV, V, VV>
+    T: ProtocolLengthDeterminer<'a>
+> ProtocolVariantReadable<'a, Vec<V>> for LengthFunctionArray<V, VV, T>
+    where ConstAssert<{ T::ELEMENT_COUNT }>: ConstAssertTrue
 {
     fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Vec<V>> {
-        let length = L::into_usize(LV::read_variant(cursor)?);
+        let length = T::read_variant(cursor)?;
         let mut result = Vec::new();
         for _ in 0..length {
             result.push(VV::read_variant(cursor)?);
@@ -635,11 +597,11 @@ impl<
 
 impl<
     'a,
-    L: ProtocolLength,
-    LV: ProtocolVariantReadable<'a, L>,
     V: 'a + Clone,
     VV: ProtocolVariantReadable<'a, V>,
-> ProtocolVariantReadable<'a, Cow<'a, [V]>> for LengthProvidedArray<L, LV, V, VV>
+    T: ProtocolLengthDeterminer<'a>
+> ProtocolVariantReadable<'a, Cow<'a, [V]>> for LengthFunctionArray<V, VV, T>
+    where ConstAssert<{ T::ELEMENT_COUNT }>: ConstAssertTrue
 {
     fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Cow<'a, [V]>> {
         Self::read_variant(cursor).map(|vec| Cow::Owned(vec))

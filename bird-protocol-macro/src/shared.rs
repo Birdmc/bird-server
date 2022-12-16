@@ -394,16 +394,16 @@ pub fn create_prepared_fields(fields: Fields, ghost_values: impl Iterator<Item=G
 
 pub fn create_prepared_variants(variants: impl Iterator<Item=Variant>, object_attributes: &ObjectAttributes) -> syn::Result<Vec<(Variant, TokenStream, VariantAttributes)>> {
     let mut result = Vec::new();
-    let mut previous_value = quote! { -1 };
+    let mut previous_value = quote! { 0 };
     let key_ty = object_attributes.key_ty.as_ref().unwrap();
-    let increment = object_attributes.key_increment.clone().unwrap_or_else(|| quote! { + 1 });
+    let increment = object_attributes.key_increment.clone().unwrap_or_else(|| quote! { + (1 as #key_ty) });
     for variant in variants {
         let variant_attributes: VariantAttributes = parse_attributes(&variant.attrs, "bp")?;
         let value = match variant_attributes.key_value {
             Some(ref value) => value.clone(),
-            None => quote! { (#previous_value #increment) as #key_ty  },
+            None => quote! { (#previous_value) as #key_ty  },
         };
-        previous_value = value.clone();
+        previous_value = quote! { #value #increment };
         result.push((variant, value, variant_attributes));
     }
     Ok(result)

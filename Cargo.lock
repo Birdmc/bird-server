@@ -52,6 +52,7 @@ dependencies = [
  "anyhow",
  "bird-chat",
  "bird-protocol-macro",
+ "bird-util",
  "euclid",
  "fastnbt",
  "serde",
@@ -80,9 +81,14 @@ dependencies = [
  "bitfield-struct",
  "either",
  "euclid",
+ "fastnbt",
  "serde",
  "uuid",
 ]
+
+[[package]]
+name = "bird-util"
+version = "0.1.0"
 
 [[package]]
 name = "bitfield-struct"

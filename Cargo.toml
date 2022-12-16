@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "bird-util",
     "bird-chat",
     "bird-data",
     "bird-data-gen",

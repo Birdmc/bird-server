@@ -1,3 +1,5 @@
+#![feature(generic_const_exprs)]
+
 use std::{ops::Range, marker::PhantomData};
 
 mod impls;
@@ -26,13 +28,29 @@ pub struct VarInt;
 
 pub struct VarLong;
 
-pub struct RemainingBytesArray;
+pub type LengthFunctionBytesArray<T> = LengthFunctionRawArray<u8, u8, T>;
 
-pub struct RemainingArray<V, VV>(PhantomData<(V, VV)>);
+pub struct LengthFunctionRawArray<V, VV, T>(PhantomData<(V, VV, T)>);
 
-pub struct LengthProvidedBytesArray<L, LV>(PhantomData<(L, LV)>);
+pub struct LengthFunctionArray<V, VV, T>(PhantomData<(V, VV, T)>);
 
-pub struct LengthProvidedArray<L, LV, V, VV>(PhantomData<(L, LV, V, VV)>);
+pub type RemainingBytesArray = RemainingRawArray<u8, u8>;
+
+pub type RemainingRawArray<V, VV> = LengthFunctionRawArray<V, VV, ProtocolLengthRemainingDeterminer>;
+
+pub type RemainingArray<V, VV> = LengthFunctionArray<V, VV, ProtocolLengthRemainingDeterminer>;
+
+pub type LengthProvidedBytesArray<L, LV> = LengthProvidedRawArray<L, LV, u8, u8>;
+
+pub type LengthProvidedRawArray<L, LV, V, VV> = LengthFunctionRawArray<V, VV, ProtocolLengthProvidedDeterminer<L, LV>>;
+
+pub type LengthProvidedArray<L, LV, V, VV> = LengthFunctionArray<V, VV, ProtocolLengthProvidedDeterminer<L, LV>>;
+
+pub type LengthConstBytesArray<const SIZE: usize> = LengthConstRawArray<u8, u8, SIZE>;
+
+pub type LengthConstRawArray<V, VV, const SIZE: usize> = LengthFunctionRawArray<V, VV, ProtocolLengthConstDeterminer<SIZE>>;
+
+pub type LengthConstArray<V, VV, const SIZE: usize> = LengthFunctionArray<V, VV, ProtocolLengthConstDeterminer<SIZE>>;
 
 pub struct Json;
 
@@ -43,6 +61,16 @@ pub struct Angle;
 pub struct BlockPosition;
 
 pub struct FixedPointNumber<T, const N: u8>(PhantomData<T>,);
+
+pub trait ProtocolLengthDeterminer<'a>: ProtocolVariantReadable<'a, usize> + ProtocolVariantWritable<usize> + ProtocolSize {
+    const ELEMENT_COUNT: bool;
+}
+
+pub struct ProtocolLengthProvidedDeterminer<L, LV>(PhantomData<(L, LV)>);
+
+pub struct ProtocolLengthRemainingDeterminer;
+
+pub struct ProtocolLengthConstDeterminer<const N: usize>;
 
 pub trait ProtocolLength {
     fn into_usize(self) -> usize;
@@ -79,6 +107,8 @@ pub trait ProtocolPacket {
     const BOUND: ProtocolPacketBound;
     const STATE: ProtocolPacketState;
 }
+
+pub unsafe trait ProtocolRaw {}
 
 pub trait ProtocolSize {
     const SIZE: Range<u32>;
