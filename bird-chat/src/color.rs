@@ -1,6 +1,5 @@
 use std::fmt::{Display, Formatter};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::Error;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 #[serde(try_from = "&str", into = "String")]

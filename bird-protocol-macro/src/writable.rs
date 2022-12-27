@@ -1,6 +1,6 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
-use syn::{Data, DeriveInput, Field, Fields, parse_macro_input, Token, Variant};
+use syn::{Data, DeriveInput, Fields, Variant};
 use crate::shared::{create_prepared_fields, create_prepared_variants, GhostValue, ObjectAttributes, parse_attributes};
 
 pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {

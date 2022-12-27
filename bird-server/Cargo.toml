@@ -33,3 +33,9 @@ version = "0.22.7"
 
 [dependencies.bitfield-struct]
 version = "0.1.8"
+
+[dependencies.bird-util]
+path = "../bird-util"
+
+[dependencies.cesu8]
+version = "1.1.0"

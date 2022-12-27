@@ -1,16 +1,12 @@
 use std::collections::HashMap;
-use std::mem::{discriminant, MaybeUninit};
 use std::str::FromStr;
 use either::Either;
 use proc_macro2::{Ident, Span, TokenStream, TokenTree};
 use quote::{quote, ToTokens};
-use syn::{Expr, ExprAssign, ExprPath, ExprTuple, ExprType, Field, Fields, GenericParam, Generics, Lifetime, LifetimeDef, Lit, Token, Type, Variant};
+use syn::{Expr, ExprPath, ExprTuple, Fields, GenericParam, Generics, Lifetime, LifetimeDef, Lit, Token, Variant};
 use syn::parse::{Parse, ParseStream};
-use syn::parse::discouraged::Speculative;
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::token::parsing::punct;
-use syn::token::Token;
 
 pub struct ObjectAttributes {
     pub key_variant: Option<TokenStream>,
@@ -80,6 +76,7 @@ impl Attributes {
         self.expressions.remove(name)
     }
 
+    #[allow(dead_code)]
     pub fn remove_string_attribute(&mut self, name: &String) -> syn::Result<Option<(String, Span)>> {
         match self.remove_attribute(name) {
             Some(expr) => {
@@ -167,7 +164,7 @@ impl Attributes {
 
 
 impl Parse for Attributes {
-    fn parse(mut input: ParseStream) -> syn::Result<Self> {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
         type PunctuatedList = Punctuated<AttributeAssign, Token![,]>;
         type AssignKey = Option<Ident>;
         type AssignValue = Option<Either<Expr, TokenStream>>;
@@ -323,6 +320,7 @@ impl Parse for FieldAttributes {
     }
 }
 
+#[allow(dead_code)]
 fn expr_into_string(expr: Expr) -> syn::Result<String> {
     match expr {
         Expr::Path(ref path) => Ok(expr_path_into_string(path)),
@@ -334,6 +332,7 @@ fn expr_into_string(expr: Expr) -> syn::Result<String> {
     }.map_err(|_| syn::Error::new(expr.span(), "Expected ident or string"))
 }
 
+#[allow(dead_code)]
 fn expr_path_into_string(path: &ExprPath) -> String {
     path.path.segments.iter()
         .map(|segment| segment.ident.to_string())

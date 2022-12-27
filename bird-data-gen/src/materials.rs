@@ -23,7 +23,10 @@ pub fn generate_materials(api: &Api) -> syn::Result<TokenStream> {
         }});
         material_enum_ts.push(material_enum_ident);
     }
+    let registry_count = material_enum_ts.len();
     Ok(quote! {
+        pub const MATERIAL_COUNT: usize = #registry_count;
+
         #[derive(Clone, Copy, Debug, PartialEq)]
         pub enum Material { #(#material_enum_ts,)* }
 

@@ -7,7 +7,9 @@ use uuid::Uuid;
 use bird_chat::component::Component;
 use bird_chat::identifier::Identifier;
 use bird_protocol::{*, ProtocolPacketState::*, ProtocolPacketBound::*};
-use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolReadable, ProtocolSize, ProtocolWritable};
+use bird_protocol::derive::{ProtocolAll, ProtocolPacket};
+use bird_util::*;
+use crate::nbt::{NbtElement, read_compound_enter, read_named_nbt_tag, write_compound_enter, write_nbt_string};
 
 #[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
 pub struct Slot<'a> {
@@ -1207,4 +1209,244 @@ pub struct InitializeWorldBorderPS2C {
 #[bp(id = 0x1F, state = Play, bound = Client)]
 pub struct KeepAlivePS2C {
     pub keep_alive_id: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct CompactLongsWriter<const BITS: u8> {
+    vec: Vec<u64>,
+    current: u64,
+    current_index: u8,
+}
+
+impl<const BITS: u8> CompactLongsWriter<BITS>
+    where ConstAssert<{ BITS <= 64 }>: ConstAssertTrue {
+    const ELEMENTS_IN_LONG: u8 = 64 / BITS;
+    const GAP: u8 = 64 % BITS;
+
+    pub fn new() -> Self {
+        Self {
+            vec: Vec::new(),
+            current: 0,
+            current_index: 0,
+        }
+    }
+
+    /// # Safety.
+    /// The caller must ensure that the number is not longer than BITS const
+    pub unsafe fn push(&mut self, number: u64) {
+        debug_assert!(number < (1 << (BITS+1)));
+        if self.current_index == Self::ELEMENTS_IN_LONG {
+            self.vec.push(self.current);
+            self.current = 0;
+            self.current_index = 0;
+        }
+        self.current |= number << (self.current_index * BITS + Self::GAP);
+        self.current_index += 1;
+    }
+
+    pub fn elements(&self) -> usize {
+        self.current_index as usize + (self.vec.len() * (Self::ELEMENTS_IN_LONG as usize))
+    }
+
+    pub fn finish(mut self) -> Vec<u64> {
+        if self.current_index != 0 {
+            self.vec.push(self.current)
+        }
+        self.vec
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CompactLongsReader<I, const BITS: u8, const COUNT: usize> {
+    iterator: I,
+    current_long: u64,
+    next_long: Option<u64>,
+    current_index: u8,
+}
+
+impl<I: Iterator<Item = u64>, const BITS: u8, const COUNT: usize> CompactLongsReader<I, BITS, COUNT> {
+    pub fn new(mut iterator: I) -> Option<Self> {
+        let current_long = iterator.next()? >> (64 % BITS);
+        let next_long = iterator.next();
+        Some(Self {
+            iterator,
+            current_long,
+            next_long,
+            current_index: 0,
+        })
+    }
+}
+
+impl<I: Iterator<Item = u64>, const BITS: u8, const COUNT: usize> Iterator for CompactLongsReader<I, BITS, COUNT>
+    where ConstAssert<{ BITS <= 64 }>: ConstAssertTrue {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // TODO const evaluation
+        if self.next_long.is_none() && self.current_index == {
+            let result = COUNT % (64 / BITS as usize);
+            if result == 0 { 64 / BITS } else { result as u8 }
+        } {
+            return None;
+        }
+        if self.current_index == 64 / BITS {
+            self.current_index = 0;
+            self.current_long = unsafe { self.next_long.unwrap_unchecked() } >> (64 % BITS);
+            self.next_long = self.iterator.next();
+        }
+        let result = self.current_long & ((1 << BITS) - 1);
+        self.current_long >>= BITS;
+        self.current_index += 1;
+        Some(result)
+    }
+}
+
+pub const CHUNK_DATA_HEIGHT_MAP_KEY: &'static str = "MOTION_BLOCKING";
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+#[repr(transparent)]
+pub struct ChunkDataHeightMap<'a>(ChunkDataHeightMapInner<'a>);
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+#[doc(hidden)]
+pub enum ChunkDataHeightMapInner<'a> {
+    Raw(&'a [u8]),
+    Longs(&'a [u64]),
+}
+
+impl<'a> Iterator for ChunkDataHeightMapInner<'a> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Raw(raw) => u64::read(raw).ok(),
+            Self::Longs(long) => {
+                let number = *long.get(0)?;
+                *long = &long[1..];
+                Some(number)
+            }
+        }
+    }
+}
+
+impl<'a> IntoIterator for ChunkDataHeightMap<'a> {
+    type Item = u64;
+    type IntoIter = CompactLongsReader<ChunkDataHeightMapInner<'a>, 9, 256>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        // SAFETY: It is sure that array of inner struct is not empty.
+        unsafe { Self::IntoIter::new(self.0).unwrap_unchecked() }
+    }
+}
+
+impl<'a> ChunkDataHeightMap<'a> {
+    /// # Safety.
+    /// The caller must ensure that the length of data slice is 37 * 8
+    pub const unsafe fn new_raw(data: &'a [u8]) -> Self {
+        debug_assert!(data.len() == 37 * 8);
+        Self(ChunkDataHeightMapInner::Raw(data))
+    }
+
+    /// # Safety.
+    /// The caller must ensure that the length of data is 37
+    pub const unsafe fn new_longs(data: &'a [u64]) -> Self {
+        debug_assert!(data.len() == 37);
+        Self(ChunkDataHeightMapInner::Longs(data))
+    }
+}
+
+impl<'a> ProtocolSize for ChunkDataHeightMap<'a> {
+    const SIZE: Range<u32> = Nbt::SIZE;
+}
+
+impl<'a> ProtocolReadable<'a> for ChunkDataHeightMap<'a> {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        read_compound_enter(cursor)?;
+        match read_named_nbt_tag(CHUNK_DATA_HEIGHT_MAP_KEY, cursor)? {
+            Some(NbtElement::LongArray(data)) => match data.len() == 37 * 8 {
+                true => Ok(Self(ChunkDataHeightMapInner::Raw(data))),
+                false => Err(ProtocolError::Any(anyhow::Error::msg("MOTION_BLOCKING must be NbtLongArray with exactly 37 length")))
+            },
+            _ => Err(ProtocolError::Any(anyhow::Error::msg("MOTION_BLOCKING is not NbtLongArray or not present"))),
+        }
+    }
+}
+
+impl<'a> ProtocolWritable for ChunkDataHeightMap<'a> {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        write_compound_enter(writer)?;
+        12i8.write(writer)?;
+        write_nbt_string(CHUNK_DATA_HEIGHT_MAP_KEY, writer)?;
+        match self.0 {
+            ChunkDataHeightMapInner::Raw(raw) => {
+                37i32.write(writer)?; // the length of raw
+                writer.write_bytes(raw)
+            }
+            ChunkDataHeightMapInner::Longs(array) => LengthProvidedArray::<i32, i32, u64, u64>::write_variant(array, writer)?,
+        }
+        0i8.write(writer)
+    }
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+pub struct ChunkSectionsData<'a> {
+    #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+    pub data: &'a [u8],
+}
+
+pub struct ChunkSectionData {
+
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+pub struct ChunkData<'a> {
+    pub height_map: ChunkDataHeightMap<'a>,
+    pub chunk_sections: ChunkSectionsData<'a>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_longs_reader_test() {
+        let mut compact_longs_reader = CompactLongsReader::<_, 9, 19>::new(
+            vec![
+                0b111111111_001111111_000011111_000000111_000000001_0; 3
+            ].into_iter()
+        ).unwrap();
+        for i in 0..3 {
+            assert_eq!(compact_longs_reader.next(), Some(0b1));
+            assert_eq!(compact_longs_reader.next(), Some(0b111));
+            assert_eq!(compact_longs_reader.next(), Some(0b11111));
+            assert_eq!(compact_longs_reader.next(), Some(0b1111111));
+            assert_eq!(compact_longs_reader.next(), Some(0b111111111));
+            if i == 2 {
+                assert_eq!(compact_longs_reader.next(), None);
+            }
+            else {
+                assert_eq!(compact_longs_reader.next(), Some(0b0));
+                assert_eq!(compact_longs_reader.next(), Some(0b0));
+            }
+        }
+    }
+
+    #[test]
+    fn compact_longs_writer_test() {
+        let mut compact_longs_writer = CompactLongsWriter::<9>::new();
+        unsafe {
+            for i in 0..3 {
+                compact_longs_writer.push(0b1);
+                compact_longs_writer.push(0b111);
+                compact_longs_writer.push(0b11111);
+                compact_longs_writer.push(0b1111111);
+                compact_longs_writer.push(0b111111111);
+                if i != 2 {
+                    compact_longs_writer.push(0b0);
+                    compact_longs_writer.push(0b0);
+                }
+            }
+        }
+        assert_eq!(compact_longs_writer.finish(), vec![0b111111111_001111111_000011111_000000111_000000001_0; 3]);
+    }
 }

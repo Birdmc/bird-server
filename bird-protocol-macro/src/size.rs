@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
-use syn::{Data, DeriveInput, Fields, Type};
+use syn::{Data, DeriveInput, Fields};
 use crate::shared::{FieldAttributes, GhostValue, ObjectAttributes, parse_attributes, VariantAttributes};
 
 pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {

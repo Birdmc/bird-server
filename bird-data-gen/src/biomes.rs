@@ -42,6 +42,7 @@ pub fn generate_biomes(api: &Api) -> syn::Result<TokenStream> {
     }
     let categories = categories.into_iter().collect::<Vec<Ident>>();
     let precipitations = precipitations.into_iter().collect::<Vec<Ident>>();
+    let register_count = biome_consts.len();
     Ok(quote! {
         #[derive(Clone, Copy, Debug, PartialEq)]
         pub enum BiomeCategory { #(#categories,)* }
@@ -60,6 +61,8 @@ pub fn generate_biomes(api: &Api) -> syn::Result<TokenStream> {
             pub color: u32,
             pub rain_fall: f32,
         }
+
+        pub const BIOME_COUNT: usize = #register_count;
 
         pub mod biome_data {
             #(#biome_consts)*

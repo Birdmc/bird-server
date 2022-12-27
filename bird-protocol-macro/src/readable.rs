@@ -1,6 +1,6 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
-use syn::{Data, DeriveInput, Field, Fields, parse_macro_input, Variant};
+use syn::{Data, DeriveInput, Fields, Variant};
 use crate::shared::{create_prepared_fields, create_prepared_variants, GhostValue, ObjectAttributes, obligate_lifetime, parse_attributes};
 use crate::size::enum_key_size;
 
@@ -60,7 +60,7 @@ pub fn impl_derive(item: proc_macro::TokenStream) -> syn::Result<TokenStream> {
                             );
                             <#ident as bird_protocol::ProtocolSize>::SIZE.start as usize
                         };
-                        let __rcursor = &mut bird_protocol::SliceProtocolCursor::new(__cursor.take_bytes(__RCSIZE)?);
+                        let __rcursor = &mut __cursor.take_bytes(__RCSIZE)?;
                     }
                 },
                 false => quote! { let __rcursor = __cursor; },

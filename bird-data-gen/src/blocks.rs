@@ -193,7 +193,8 @@ pub fn generate_blocks(api: &Api) -> syn::Result<TokenStream> {
         blocks_data_from_name_ts.push(quote! { #name => std::option::Option::Some(&block_data:: #block_data_const_ident ) });
         blocks_enum_ts.push(block_enum_repr);
     }
-
+    let registry_count = blocks_const_data_ts.len();
+    let registry_state_count = blocks_from_state_ts.len();
     Ok(quote! {
 
         #(
@@ -217,6 +218,9 @@ pub fn generate_blocks(api: &Api) -> syn::Result<TokenStream> {
 
         #[derive(Clone, Copy, Debug, PartialEq)]
         pub enum Block { #(#blocks_enum_ts,)* }
+
+        pub const BLOCK_COUNT: usize = #registry_count;
+        pub const BLOCK_STATE_COUNT: usize = #registry_state_count;
 
         pub mod block_data {
             #(#blocks_const_data_ts)*

@@ -440,7 +440,7 @@ impl<'a> ProtocolVariantReadable<'a, usize> for ProtocolLengthRemainingDetermine
 impl ProtocolSize for ProtocolLengthRemainingDeterminer { const SIZE: Range<u32> = (0..0); }
 
 impl ProtocolVariantWritable<usize> for ProtocolLengthRemainingDeterminer {
-    fn write_variant<W: ProtocolWriter>(object: &usize, writer: &mut W) -> anyhow::Result<()> {
+    fn write_variant<W: ProtocolWriter>(_object: &usize, _writer: &mut W) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -450,7 +450,7 @@ impl<'a> ProtocolLengthDeterminer<'a> for ProtocolLengthRemainingDeterminer {
 }
 
 impl<'a, const N: usize> ProtocolVariantReadable<'a, usize> for ProtocolLengthConstDeterminer<N> {
-    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<usize> {
+    fn read_variant<C: ProtocolCursor<'a>>(_cursor: &mut C) -> ProtocolResult<usize> {
         Ok(N)
     }
 }
@@ -458,7 +458,7 @@ impl<'a, const N: usize> ProtocolVariantReadable<'a, usize> for ProtocolLengthCo
 impl<const N: usize> ProtocolSize for ProtocolLengthConstDeterminer<N> { const SIZE: Range<u32> = (0..0); }
 
 impl<const N: usize> ProtocolVariantWritable<usize> for ProtocolLengthConstDeterminer<N> {
-    fn write_variant<W: ProtocolWriter>(object: &usize, writer: &mut W) -> anyhow::Result<()> {
+    fn write_variant<W: ProtocolWriter>(_object: &usize, _writer: &mut W) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -723,7 +723,6 @@ delegate_size!(BlockPosition = u64);
 #[cfg(feature = "euclid")]
 mod euclid_impls {
     use super::*;
-    use euclid::*;
 
     impl<T: ProtocolSize, U> ProtocolSize for Vector3D<T, U> {
         const SIZE: Range<u32> = (
