@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::marker::PhantomData;
 use std::ops::Range;
 use bitfield_struct::bitfield;
 use euclid::default::Vector3D;
@@ -7,7 +8,7 @@ use uuid::Uuid;
 use bird_chat::component::Component;
 use bird_chat::identifier::Identifier;
 use bird_protocol::{*, ProtocolPacketState::*, ProtocolPacketBound::*};
-use bird_protocol::derive::{ProtocolAll, ProtocolPacket};
+use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolSize, ProtocolWritable};
 use bird_util::*;
 use crate::nbt::{NbtElement, read_compound_enter, read_named_nbt_tag, write_compound_enter, write_nbt_string};
 
@@ -1212,13 +1213,13 @@ pub struct KeepAlivePS2C {
 }
 
 #[derive(Clone, Debug)]
-pub struct CompactLongsWriter<const BITS: u8> {
+pub struct GapCompactLongsWriter<const BITS: u8> {
     vec: Vec<u64>,
     current: u64,
     current_index: u8,
 }
 
-impl<const BITS: u8> CompactLongsWriter<BITS>
+impl<const BITS: u8> GapCompactLongsWriter<BITS>
     where ConstAssert<{ BITS <= 64 }>: ConstAssertTrue {
     const ELEMENTS_IN_LONG: u8 = 64 / BITS;
     const GAP: u8 = 64 % BITS;
@@ -1234,7 +1235,7 @@ impl<const BITS: u8> CompactLongsWriter<BITS>
     /// # Safety.
     /// The caller must ensure that the number is not longer than BITS const
     pub unsafe fn push(&mut self, number: u64) {
-        debug_assert!(number < (1 << (BITS+1)));
+        debug_assert!(number < (1 << (BITS + 1)));
         if self.current_index == Self::ELEMENTS_IN_LONG {
             self.vec.push(self.current);
             self.current = 0;
@@ -1257,14 +1258,14 @@ impl<const BITS: u8> CompactLongsWriter<BITS>
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct CompactLongsReader<I, const BITS: u8, const COUNT: usize> {
+pub struct GapCompactLongsReader<I, const BITS: u8, const COUNT: usize> {
     iterator: I,
     current_long: u64,
     next_long: Option<u64>,
     current_index: u8,
 }
 
-impl<I: Iterator<Item = u64>, const BITS: u8, const COUNT: usize> CompactLongsReader<I, BITS, COUNT> {
+impl<I: Iterator<Item=u64>, const BITS: u8, const COUNT: usize> GapCompactLongsReader<I, BITS, COUNT> {
     pub fn new(mut iterator: I) -> Option<Self> {
         let current_long = iterator.next()? >> (64 % BITS);
         let next_long = iterator.next();
@@ -1277,7 +1278,7 @@ impl<I: Iterator<Item = u64>, const BITS: u8, const COUNT: usize> CompactLongsRe
     }
 }
 
-impl<I: Iterator<Item = u64>, const BITS: u8, const COUNT: usize> Iterator for CompactLongsReader<I, BITS, COUNT>
+impl<I: Iterator<Item=u64>, const BITS: u8, const COUNT: usize> Iterator for GapCompactLongsReader<I, BITS, COUNT>
     where ConstAssert<{ BITS <= 64 }>: ConstAssertTrue {
     type Item = u64;
 
@@ -1331,7 +1332,7 @@ impl<'a> Iterator for ChunkDataHeightMapInner<'a> {
 
 impl<'a> IntoIterator for ChunkDataHeightMap<'a> {
     type Item = u64;
-    type IntoIter = CompactLongsReader<ChunkDataHeightMapInner<'a>, 9, 256>;
+    type IntoIter = GapCompactLongsReader<ChunkDataHeightMapInner<'a>, 9, 256>;
 
     fn into_iter(self) -> Self::IntoIter {
         // SAFETY: It is sure that array of inner struct is not empty.
@@ -1388,17 +1389,147 @@ impl<'a> ProtocolWritable for ChunkDataHeightMap<'a> {
     }
 }
 
-#[derive(ProtocolAll, Clone, Copy, Debug)]
+pub trait PalettedContainerBitsDeterminer {
+    fn get(values: usize) -> u8;
+}
+
+#[derive(Clone, Debug)]
+pub struct PalettedContainer<T, const MAX_VALUE: i32, const LENGTH: usize> {
+    inner: PalettedContainerInner<LENGTH>,
+    _marker: PhantomData<T>,
+}
+
+#[derive(Clone, Debug)]
+enum PalettedContainerInner<const LENGTH: usize> {
+    Single(i32),
+    Indirect(Vec<i32>, Box<[i32; LENGTH]>),
+    Direct(Box<[i32; LENGTH]>),
+}
+
+impl<T, const MAX_VALUE: i32, const LENGTH: usize> PalettedContainer<T, MAX_VALUE, LENGTH>
+    where
+        T: PalettedContainerBitsDeterminer {
+    const DIRECT_START: u8 = const_log2_ceil(MAX_VALUE as u64) as u8;
+
+    pub fn new_direct(values: Box<[i32; LENGTH]>) -> Self {
+        Self {
+            inner: PalettedContainerInner::Direct(values),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn new_indirect(values: Vec<i32>, indexes: Box<[i32; LENGTH]>) -> Self {
+        Self {
+            inner: PalettedContainerInner::Indirect(values, indexes),
+            _marker: PhantomData,
+        }
+    }
+
+    pub const fn new_single(value: i32) -> Self {
+        Self {
+            inner: PalettedContainerInner::Single(value),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T, const MAX_VALUE: i32, const LENGTH: usize> ProtocolSize for PalettedContainer<T, MAX_VALUE, LENGTH> {
+    const SIZE: Range<u32> = u8::SIZE.start + VarInt::SIZE.start..u32::MAX;
+}
+
+/// # Safety
+/// Caller must ensure that bits_per_entry is less or equals to 64
+pub unsafe fn write_compacted_array<'a, T: ProtocolLengthDeterminer<'a>>(iterator: impl Iterator<Item = u64>, bits_per_entry: u8, writer: &mut impl ProtocolWriter) -> anyhow::Result<()> {
+    debug_assert!(bits_per_entry <= 64);
+    T::write_variant(&(bits_per_entry as usize * 16), writer)?;
+    let mut current_u64 = 0u64;
+    let mut current_offset = 0;
+    for value in iterator {
+        current_u64 |= (value << current_offset);
+        if current_offset > 64 - bits_per_entry {
+            current_u64.write(writer)?;
+            current_u64 = value >> (64 - current_offset);
+            current_offset = current_offset + bits_per_entry - 64;
+        }
+        current_offset += bits_per_entry;
+    }
+    match current_offset == 0 {
+        true => Ok(()),
+        false => current_u64.write(writer)
+    }
+}
+
+
+impl<T, const MAX_VALUE: i32, const LENGTH: usize> PalettedContainer<T, MAX_VALUE, LENGTH>
+    where
+        T: PalettedContainerBitsDeterminer {
+    const MAX_BITS: u8 = {
+        let result = const_log2_ceil(MAX_VALUE as u64) as u8;
+        assert!(result <= 64);
+        result
+    };
+}
+
+impl<T, const MAX_VALUE: i32, const LENGTH: usize> ProtocolWritable for PalettedContainer<T, MAX_VALUE, LENGTH>
+    where
+        T: PalettedContainerBitsDeterminer {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        match self.inner {
+            PalettedContainerInner::Single(single) => {
+                0u8.write(writer)?;
+                VarInt::write_variant(&single, writer)?;
+                VarInt::write_variant(&0, writer)
+            },
+            PalettedContainerInner::Indirect(ref values, ref indexes) => {
+                LengthProvidedArray::<i32, VarInt, i32, i32>::write_variant(values, writer)?;
+                unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(indexes.iter().map(|val| *val as u64), T::get(values.len()), writer) }
+            },
+            PalettedContainerInner::Direct(ref direct) => {
+                unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(direct.iter().map(|val| *val as u64), Self::MAX_BITS, writer) }
+            }
+        }
+    }
+}
+
+// TODO PalettedContainer ProtocolReadable implementation
+
+#[derive(ProtocolWritable, ProtocolSize, Clone, Copy, Debug)]
 pub struct ChunkSectionsData<'a> {
     #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
     pub data: &'a [u8],
 }
 
-pub struct ChunkSectionData {
+#[derive(Clone, Copy, Debug)]
+pub struct BlockStatesBits;
 
+#[derive(Clone, Copy, Debug)]
+pub struct BiomesBits;
+
+impl PalettedContainerBitsDeterminer for BlockStatesBits {
+    fn get(values: usize) -> u8 {
+        match values <= 16 {
+            true => 4,
+            false => const_log2_ceil(values as u64) as u8,
+        }
+    }
 }
 
-#[derive(ProtocolAll, Clone, Copy, Debug)]
+impl PalettedContainerBitsDeterminer for BiomesBits {
+    fn get(values: usize) -> u8 {
+        let r = const_log2_ceil(values as u64) as u8;
+        debug_assert!(r <= 3);
+        r
+    }
+}
+
+#[derive(ProtocolWritable, ProtocolSize, Clone, Debug)]
+pub struct ChunkSectionData {
+    pub block_count: i16,
+    pub block_states: PalettedContainer<BlockStatesBits, { bird_data::BLOCK_STATE_COUNT as i32 }, 4096>,
+    pub biomes: PalettedContainer<BiomesBits, { bird_data::BIOME_COUNT as i32 }, 64>
+}
+
+#[derive(ProtocolWritable, ProtocolSize, Clone, Copy, Debug)]
 pub struct ChunkData<'a> {
     pub height_map: ChunkDataHeightMap<'a>,
     pub chunk_sections: ChunkSectionsData<'a>,
@@ -1409,10 +1540,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compact_longs_reader_test() {
-        let mut compact_longs_reader = CompactLongsReader::<_, 9, 19>::new(
+    fn gap_compact_longs_reader_test() {
+        let mut compact_longs_reader = GapCompactLongsReader::<_, 9, 19>::new(
             vec![
-                0b111111111_001111111_000011111_000000111_000000001_0; 3
+                0b111111111_001111111_000011111_000000111_000000001_0; 3,
             ].into_iter()
         ).unwrap();
         for i in 0..3 {
@@ -1423,8 +1554,7 @@ mod tests {
             assert_eq!(compact_longs_reader.next(), Some(0b111111111));
             if i == 2 {
                 assert_eq!(compact_longs_reader.next(), None);
-            }
-            else {
+            } else {
                 assert_eq!(compact_longs_reader.next(), Some(0b0));
                 assert_eq!(compact_longs_reader.next(), Some(0b0));
             }
@@ -1432,8 +1562,8 @@ mod tests {
     }
 
     #[test]
-    fn compact_longs_writer_test() {
-        let mut compact_longs_writer = CompactLongsWriter::<9>::new();
+    fn gap_compact_longs_writer_test() {
+        let mut compact_longs_writer = GapCompactLongsWriter::<9>::new();
         unsafe {
             for i in 0..3 {
                 compact_longs_writer.push(0b1);
