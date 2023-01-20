@@ -1481,10 +1481,13 @@ impl<T, const MAX_VALUE: i32, const LENGTH: usize> ProtocolWritable for Paletted
                 VarInt::write_variant(&0, writer)
             },
             PalettedContainerInner::Indirect(ref values, ref indexes) => {
+                let bits_per_entry = T::get(values.len());
+                bits_per_entry.write(writer)?;
                 LengthProvidedArray::<i32, VarInt, i32, i32>::write_variant(values, writer)?;
-                unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(indexes.iter().map(|val| *val as u64), T::get(values.len()), writer) }
+                unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(indexes.iter().map(|val| *val as u64), bits_per_entry, writer) }
             },
             PalettedContainerInner::Direct(ref direct) => {
+                Self::MAX_BITS.write(writer)?;
                 unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(direct.iter().map(|val| *val as u64), Self::MAX_BITS, writer) }
             }
         }
@@ -1516,9 +1519,7 @@ impl PalettedContainerBitsDeterminer for BlockStatesBits {
 
 impl PalettedContainerBitsDeterminer for BiomesBits {
     fn get(values: usize) -> u8 {
-        let r = const_log2_ceil(values as u64) as u8;
-        debug_assert!(r <= 3);
-        r
+        const_log2_ceil(values as u64) as u8
     }
 }
 
@@ -1543,7 +1544,7 @@ mod tests {
     fn gap_compact_longs_reader_test() {
         let mut compact_longs_reader = GapCompactLongsReader::<_, 9, 19>::new(
             vec![
-                0b111111111_001111111_000011111_000000111_000000001_0; 3,
+                0b111111111_001111111_000011111_000000111_000000001_0; 3
             ].into_iter()
         ).unwrap();
         for i in 0..3 {
