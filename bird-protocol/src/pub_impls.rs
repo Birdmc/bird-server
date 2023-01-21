@@ -28,3 +28,12 @@ impl<'a> ProtocolCursor<'a> for &'a [u8] {
         self.len()
     }
 }
+
+impl ProtocolWriter for Vec<u8> {
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        // TODO change implementation
+        for byte in bytes {
+            self.push(*byte)
+        }
+    }
+}

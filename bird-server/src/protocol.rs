@@ -1212,97 +1212,137 @@ pub struct KeepAlivePS2C {
     pub keep_alive_id: i64,
 }
 
-#[derive(Clone, Debug)]
-pub struct GapCompactLongsWriter<const BITS: u8> {
-    vec: Vec<u64>,
+#[derive(Debug)]
+pub struct GapCompactLongsWriter<'a, W: ProtocolWriter> {
+    writer: &'a mut W,
     current: u64,
+    bits: u8,
+    elements_in_long: u8,
+    gap: u8,
     current_index: u8,
 }
 
-impl<const BITS: u8> GapCompactLongsWriter<BITS>
-    where ConstAssert<{ BITS <= 64 }>: ConstAssertTrue {
-    const ELEMENTS_IN_LONG: u8 = 64 / BITS;
-    const GAP: u8 = 64 % BITS;
-
-    pub fn new() -> Self {
+impl<'a, W: ProtocolWriter> GapCompactLongsWriter<'a, W> {
+    /// # Safety
+    /// The caller must ensure that the number of bits is less or equals to 64
+    pub unsafe fn new(writer: &'a mut W, bits: u8) -> Self {
+        debug_assert!(bits <= 64);
         Self {
-            vec: Vec::new(),
+            writer,
             current: 0,
+            bits,
+            elements_in_long: 64 / bits,
+            gap: 64 % bits,
             current_index: 0,
         }
     }
 
     /// # Safety.
-    /// The caller must ensure that the number is not longer than BITS const
-    pub unsafe fn push(&mut self, number: u64) {
-        debug_assert!(number < (1 << (BITS + 1)));
-        if self.current_index == Self::ELEMENTS_IN_LONG {
-            self.vec.push(self.current);
+    /// The caller must ensure that the number is not longer than bits
+    pub unsafe fn write(&mut self, number: u64) -> anyhow::Result<()> {
+        debug_assert!(number < (1 << (self.bits + 1)));
+        if self.current_index == self.elements_in_long {
+            self.current.write(self.writer)?;
             self.current = 0;
             self.current_index = 0;
         }
-        self.current |= number << (self.current_index * BITS + Self::GAP);
+        self.current |= number << (self.current_index * self.bits + self.gap);
         self.current_index += 1;
+        Ok(())
     }
 
-    pub fn elements(&self) -> usize {
-        self.current_index as usize + (self.vec.len() * (Self::ELEMENTS_IN_LONG as usize))
-    }
-
-    pub fn finish(mut self) -> Vec<u64> {
-        if self.current_index != 0 {
-            self.vec.push(self.current)
+    /// # Safety
+    /// The caller must ensure that each number in iterator is not longer than bits
+    pub unsafe fn write_all(&mut self, iterator: impl Iterator<Item=u64>) -> anyhow::Result<()> {
+        for num in iterator {
+            self.write(num)?
         }
-        self.vec
+        Ok(())
+    }
+
+    /// # Safety.
+    /// The caller must ensure that the number is not longer than bits
+    pub unsafe fn write_and_finish(mut self, number: u64) -> anyhow::Result<()> {
+        self.write(number)?;
+        self.finish()
+    }
+
+    /// # Safety
+    /// The caller must ensure that each number in iterator is not longer than bits
+    pub unsafe fn write_all_and_finish(mut self, iterator: impl Iterator<Item=u64>) -> anyhow::Result<()> {
+        self.write_all(iterator)?;
+        self.finish()
+    }
+
+    pub fn finish(self) -> anyhow::Result<()> {
+        if self.current_index != 0 {
+            self.current.write(self.writer)?;
+        }
+        Ok(())
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct GapCompactLongsReader<I, const BITS: u8, const COUNT: usize> {
+pub struct GapCompactLongsReader<I, const COUNT: usize> {
     iterator: I,
     current_long: u64,
     next_long: Option<u64>,
+    bits: u8,
+    gap: u8,
+    elements_in_long: u8,
+    end_index: u8,
     current_index: u8,
+    mask: u64,
 }
 
-impl<I: Iterator<Item=u64>, const BITS: u8, const COUNT: usize> GapCompactLongsReader<I, BITS, COUNT> {
-    pub fn new(mut iterator: I) -> Option<Self> {
-        let current_long = iterator.next()? >> (64 % BITS);
+impl<I: Iterator<Item=u64>, const COUNT: usize> GapCompactLongsReader<I, COUNT> {
+    /// # Safety
+    /// The caller must ensure that number of bits is less or equals to 64
+    pub unsafe fn new(mut iterator: I, bits: u8) -> Option<Self> {
+        debug_assert!(bits <= 64);
+        let gap = 64 % bits;
+        let elements_in_long = 64 / bits;
+        let current_long = iterator.next()? >> gap;
         let next_long = iterator.next();
         Some(Self {
             iterator,
             current_long,
             next_long,
+            bits,
+            gap,
+            elements_in_long,
+            mask: (1 << (bits as u64)) - 1,
+            end_index: {
+                let result = COUNT % (elements_in_long as usize);
+                if result == 0 { elements_in_long } else { result as u8 }
+            },
             current_index: 0,
         })
     }
 }
 
-impl<I: Iterator<Item=u64>, const BITS: u8, const COUNT: usize> Iterator for GapCompactLongsReader<I, BITS, COUNT>
-    where ConstAssert<{ BITS <= 64 }>: ConstAssertTrue {
+impl<I: Iterator<Item=u64>, const COUNT: usize> Iterator for GapCompactLongsReader<I, COUNT> {
     type Item = u64;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // TODO const evaluation
-        if self.next_long.is_none() && self.current_index == {
-            let result = COUNT % (64 / BITS as usize);
-            if result == 0 { 64 / BITS } else { result as u8 }
-        } {
+        if self.next_long.is_none() && self.current_index == self.end_index {
             return None;
         }
-        if self.current_index == 64 / BITS {
+        if self.current_index == self.elements_in_long {
             self.current_index = 0;
-            self.current_long = unsafe { self.next_long.unwrap_unchecked() } >> (64 % BITS);
+            self.current_long = unsafe { self.next_long.unwrap_unchecked() } >> self.gap;
             self.next_long = self.iterator.next();
         }
-        let result = self.current_long & ((1 << BITS) - 1);
-        self.current_long >>= BITS;
+        let result = self.current_long & self.mask;
+        self.current_long >>= self.bits;
         self.current_index += 1;
         Some(result)
     }
 }
 
 pub const CHUNK_DATA_HEIGHT_MAP_KEY: &'static str = "MOTION_BLOCKING";
+
+// TODO should it be only MOTION_BLOCKING or WORLD_SURFACE also?
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 #[repr(transparent)]
@@ -1332,11 +1372,11 @@ impl<'a> Iterator for ChunkDataHeightMapInner<'a> {
 
 impl<'a> IntoIterator for ChunkDataHeightMap<'a> {
     type Item = u64;
-    type IntoIter = GapCompactLongsReader<ChunkDataHeightMapInner<'a>, 9, 256>;
+    type IntoIter = GapCompactLongsReader<ChunkDataHeightMapInner<'a>, 256>;
 
     fn into_iter(self) -> Self::IntoIter {
         // SAFETY: It is sure that array of inner struct is not empty.
-        unsafe { Self::IntoIter::new(self.0).unwrap_unchecked() }
+        unsafe { Self::IntoIter::new(self.0, 9).unwrap_unchecked() }
     }
 }
 
@@ -1437,28 +1477,6 @@ impl<T, const MAX_VALUE: i32, const LENGTH: usize> ProtocolSize for PalettedCont
     const SIZE: Range<u32> = u8::SIZE.start + VarInt::SIZE.start..u32::MAX;
 }
 
-/// # Safety
-/// Caller must ensure that bits_per_entry is less or equals to 64
-pub unsafe fn write_compacted_array<'a, T: ProtocolLengthDeterminer<'a>>(iterator: impl Iterator<Item = u64>, bits_per_entry: u8, writer: &mut impl ProtocolWriter) -> anyhow::Result<()> {
-    debug_assert!(bits_per_entry <= 64);
-    T::write_variant(&(bits_per_entry as usize * 16), writer)?;
-    let mut current_u64 = 0u64;
-    let mut current_offset = 0;
-    for value in iterator {
-        current_u64 |= (value << current_offset);
-        if current_offset > 64 - bits_per_entry {
-            current_u64.write(writer)?;
-            current_u64 = value >> (64 - current_offset);
-            current_offset = current_offset + bits_per_entry - 64;
-        }
-        current_offset += bits_per_entry;
-    }
-    match current_offset == 0 {
-        true => Ok(()),
-        false => current_u64.write(writer)
-    }
-}
-
 
 impl<T, const MAX_VALUE: i32, const LENGTH: usize> PalettedContainer<T, MAX_VALUE, LENGTH>
     where
@@ -1479,16 +1497,18 @@ impl<T, const MAX_VALUE: i32, const LENGTH: usize> ProtocolWritable for Paletted
                 0u8.write(writer)?;
                 VarInt::write_variant(&single, writer)?;
                 VarInt::write_variant(&0, writer)
-            },
+            }
             PalettedContainerInner::Indirect(ref values, ref indexes) => {
                 let bits_per_entry = T::get(values.len());
                 bits_per_entry.write(writer)?;
                 LengthProvidedArray::<i32, VarInt, i32, i32>::write_variant(values, writer)?;
-                unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(indexes.iter().map(|val| *val as u64), bits_per_entry, writer) }
-            },
+                // unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(indexes.iter().map(|val| *val as u64), bits_per_entry, writer) }
+                unsafe { GapCompactLongsWriter::new(writer, bits_per_entry).write_all_and_finish(indexes.iter().map(|val| *val as u64)) }
+            }
             PalettedContainerInner::Direct(ref direct) => {
                 Self::MAX_BITS.write(writer)?;
-                unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(direct.iter().map(|val| *val as u64), Self::MAX_BITS, writer) }
+                // unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(direct.iter().map(|val| *val as u64), Self::MAX_BITS, writer) }
+                unsafe { GapCompactLongsWriter::new(writer, Self::MAX_BITS).write_all_and_finish(direct.iter().map(|val| *val as u64)) }
             }
         }
     }
@@ -1527,7 +1547,7 @@ impl PalettedContainerBitsDeterminer for BiomesBits {
 pub struct ChunkSectionData {
     pub block_count: i16,
     pub block_states: PalettedContainer<BlockStatesBits, { bird_data::BLOCK_STATE_COUNT as i32 }, 4096>,
-    pub biomes: PalettedContainer<BiomesBits, { bird_data::BIOME_COUNT as i32 }, 64>
+    pub biomes: PalettedContainer<BiomesBits, { bird_data::BIOME_COUNT as i32 }, 64>,
 }
 
 #[derive(ProtocolWritable, ProtocolSize, Clone, Copy, Debug)]
@@ -1542,11 +1562,12 @@ mod tests {
 
     #[test]
     fn gap_compact_longs_reader_test() {
-        let mut compact_longs_reader = GapCompactLongsReader::<_, 9, 19>::new(
-            vec![
-                0b111111111_001111111_000011111_000000111_000000001_0; 3
-            ].into_iter()
-        ).unwrap();
+        let mut compact_longs_reader = unsafe {
+            GapCompactLongsReader::<_, 19>::new(
+                vec![0b111111111_001111111_000011111_000000111_000000001_0; 3].into_iter(),
+                9,
+            ).unwrap()
+        };
         for i in 0..3 {
             assert_eq!(compact_longs_reader.next(), Some(0b1));
             assert_eq!(compact_longs_reader.next(), Some(0b111));
@@ -1564,20 +1585,26 @@ mod tests {
 
     #[test]
     fn gap_compact_longs_writer_test() {
-        let mut compact_longs_writer = GapCompactLongsWriter::<9>::new();
+        let mut vec = Vec::new();
+        let mut compact_longs_writer = unsafe { GapCompactLongsWriter::new(&mut vec, 9) };
         unsafe {
             for i in 0..3 {
-                compact_longs_writer.push(0b1);
-                compact_longs_writer.push(0b111);
-                compact_longs_writer.push(0b11111);
-                compact_longs_writer.push(0b1111111);
-                compact_longs_writer.push(0b111111111);
+                compact_longs_writer.write(0b1).unwrap();
+                compact_longs_writer.write(0b111).unwrap();
+                compact_longs_writer.write(0b11111).unwrap();
+                compact_longs_writer.write(0b1111111).unwrap();
+                compact_longs_writer.write(0b111111111).unwrap();
                 if i != 2 {
-                    compact_longs_writer.push(0b0);
-                    compact_longs_writer.push(0b0);
+                    compact_longs_writer.write(0b0).unwrap();
+                    compact_longs_writer.write(0b0).unwrap();
                 }
             }
         }
-        assert_eq!(compact_longs_writer.finish(), vec![0b111111111_001111111_000011111_000000111_000000001_0; 3]);
+        compact_longs_writer.finish().unwrap();
+        let mut res_vec = Vec::new();
+        for _ in 0..3 {
+            0b111111111_001111111_000011111_000000111_000000001_0_u64.write(&mut res_vec).unwrap();
+        }
+        assert_eq!(vec, res_vec);
     }
 }
