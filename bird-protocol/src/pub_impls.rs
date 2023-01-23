@@ -27,13 +27,22 @@ impl<'a> ProtocolCursor<'a> for &'a [u8] {
     fn remaining_bytes(&self) -> usize {
         self.len()
     }
+
+    fn take_cursor(&self) -> Self {
+        *self
+    }
 }
 
 impl ProtocolWriter for Vec<u8> {
     fn write_bytes(&mut self, bytes: &[u8]) {
-        // TODO change implementation
-        for byte in bytes {
-            self.push(*byte)
+        let old_len = self.len();
+        self.resize(old_len + bytes.len(), 0);
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.as_mut_ptr().add(old_len), bytes.len());
         }
+    }
+
+    fn write_byte(&mut self, byte: u8) {
+        self.push(byte)
     }
 }

@@ -56,6 +56,8 @@ pub struct Json;
 
 pub struct Nbt;
 
+pub struct NbtBytes;
+
 pub struct Angle;
 
 pub struct BlockPosition;
@@ -71,6 +73,22 @@ pub struct ProtocolLengthProvidedDeterminer<L, LV>(PhantomData<(L, LV)>);
 pub struct ProtocolLengthRemainingDeterminer;
 
 pub struct ProtocolLengthConstDeterminer<const N: usize>;
+
+pub trait ProtocolCursorIteratorLimiter {
+    fn next(&mut self) -> bool;
+}
+
+pub struct ProtocolCursorIteratorCountLimiter {
+    pub count: usize,
+}
+
+pub struct ProtocolCursorIteratorNoLimiter;
+
+pub struct ProtocolCursorIterator<'a, 'b, C, L, V, VV> {
+    cursor: &'a mut C,
+    limiter: L,
+    _marker: PhantomData<&'b (V, VV)>,
+}
 
 pub trait ProtocolLength {
     fn into_usize(self) -> usize;
@@ -117,9 +135,15 @@ pub trait ProtocolSize {
 pub trait ProtocolCursor<'a> {
     fn take_byte(&mut self) -> ProtocolResult<u8>;
 
+    /// # Features
+    /// Returned slice must be with length of the given length
     fn take_bytes(&mut self, length: usize) -> ProtocolResult<&'a [u8]>;
 
     fn remaining_bytes(&self) -> usize;
+
+    /// # Features
+    /// Took cursor should be the same as `self`
+    fn take_cursor(&self) -> Self;
 
     fn has_bytes(&self, length: usize) -> bool {
         length <= self.remaining_bytes()

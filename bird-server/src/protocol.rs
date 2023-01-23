@@ -1,14 +1,14 @@
 use std::borrow::Cow;
 use std::marker::PhantomData;
-use std::ops::Range;
+use std::ops::{Range, Shl};
 use bitfield_struct::bitfield;
-use euclid::default::Vector3D;
+use euclid::default::{Vector2D, Vector3D};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use bird_chat::component::Component;
 use bird_chat::identifier::Identifier;
 use bird_protocol::{*, ProtocolPacketState::*, ProtocolPacketBound::*};
-use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolSize, ProtocolWritable};
+use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolReadable, ProtocolSize, ProtocolWritable};
 use bird_util::*;
 use crate::nbt::{NbtElement, read_compound_enter, read_named_nbt_tag, write_compound_enter, write_nbt_string};
 
@@ -17,7 +17,7 @@ pub struct Slot<'a> {
     #[bp(variant = VarInt)]
     pub item_id: i32,
     pub item_count: i8,
-    #[bp(variant = RemainingBytesArray)]
+    #[bp(variant = NbtBytes)]
     pub nbt: &'a [u8],
 }
 
@@ -422,7 +422,7 @@ pub struct BlockEntityDataPS2C<'a> {
     pub location: Vector3D<i32>,
     #[bp(variant = VarInt)]
     pub ty: i32,
-    #[bp(variant = RemainingBytesArray)]
+    #[bp(variant = NbtBytes)]
     pub nbt_data: &'a [u8],
 }
 
@@ -580,18 +580,18 @@ pub struct ChangeDifficultyPS2C {
     pub locked: bool,
 }
 
-#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
-#[bp(id = 0xC, state = Play, bound = Client)]
-pub struct ChatPreviewPS2C<'a> {
-    pub query_id: i32,
-    pub message: Option<Component<'a>>,
-}
-
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0xD, state = Play, bound = Client)]
+#[bp(id = 0xC, state = Play, bound = Client)]
 pub struct ClearTitles {
     pub reset: bool,
 }
+
+// #[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+// #[bp(id = 0xC, state = Play, bound = Client)]
+// pub struct ChatPreviewPS2C<'a> {
+//     pub query_id: i32,
+//     pub message: Option<Component<'a>>,
+// }
 
 #[derive(ProtocolAll, Clone, PartialEq, Debug)]
 pub struct CommandSuggestionsMatch<'a> {
@@ -600,7 +600,7 @@ pub struct CommandSuggestionsMatch<'a> {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
-#[bp(id = 0xE, state = Play, bound = Client)]
+#[bp(id = 0xD, state = Play, bound = Client)]
 pub struct CommandSuggestionsResponsePS2C<'a> {
     #[bp(variant = VarInt)]
     pub id: i32,
@@ -827,7 +827,7 @@ impl<'a> ProtocolReadable<'a> for BrigadierNode<'a> {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
-#[bp(id = 0xF, state = Play, bound = Client)]
+#[bp(id = 0xE, state = Play, bound = Client)]
 pub struct CommandsPS2C<'a> {
     #[bp(variant = "LengthProvidedArray<i32, VarInt, BrigadierNode<'a>, BrigadierNode<'a>>")]
     pub nodes: Cow<'a, [BrigadierNode<'a>]>,
@@ -838,13 +838,13 @@ pub struct CommandsPS2C<'a> {
 pub const PLAYER_INVENTORY_ID: u8 = 0;
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x10, state = Play, bound = Client)]
+#[bp(id = 0xF, state = Play, bound = Client)]
 pub struct CloseContainerPS2C {
     pub window_id: u8,
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
-#[bp(id = 0x11, state = Play, bound = Client)]
+#[bp(id = 0x10, state = Play, bound = Client)]
 pub struct SetContainerContentPS2C<'a> {
     pub window_id: u8,
     #[bp(variant = VarInt)]
@@ -891,7 +891,7 @@ pub enum BrewingStandProperty {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x12, state = Play, bound = Client)]
+#[bp(id = 0x11, state = Play, bound = Client)]
 pub struct SetContainerPropertyPS2C {
     pub window_id: u8,
     pub property: i16,
@@ -1008,7 +1008,7 @@ pub const CURSOR_SLOT_ID: i16 = -1;
 pub const CURSOR_WINDOW_ID: i8 = -1;
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x13, state = Play, bound = Client)]
+#[bp(id = 0x12, state = Play, bound = Client)]
 pub struct SetContainerSlotPS2C<'a> {
     pub window_id: i8,
     #[bp(variant = VarInt)]
@@ -1018,7 +1018,7 @@ pub struct SetContainerSlotPS2C<'a> {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x14, state = Play, bound = Client)]
+#[bp(id = 0x13, state = Play, bound = Client)]
 pub struct SetCooldownPS2C {
     #[bp(variant = VarInt)]
     pub item_id: i32,
@@ -1035,7 +1035,7 @@ pub enum ChatSuggestionAction {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
-#[bp(id = 0x15, state = Play, bound = Client)]
+#[bp(id = 0x14, state = Play, bound = Client)]
 pub struct ChatSuggestionsPS2C<'a> {
     pub action: ChatSuggestionAction,
     #[bp(variant = "LengthProvidedArray<i32, VarInt, &'a str, &'a str>")]
@@ -1043,11 +1043,34 @@ pub struct ChatSuggestionsPS2C<'a> {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
-#[bp(id = 0x16, state = Play, bound = Client)]
+#[bp(id = 0x15, state = Play, bound = Client)]
 pub struct PluginMessagePS2C<'a> {
     pub channel: Identifier<'a>,
     #[bp(variant = RemainingBytesArray)]
     pub data: &'a [u8],
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+#[bp(id = 0x16, state = Play, bound = Client)]
+pub struct DeleteMessagePS2C<'a> {
+    #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+    pub signature: &'a [u8],
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+#[bp(id = 0x17, state = Play, bound = Client)]
+pub struct DisconnectPS2C<'a> {
+    pub reason: Component<'a>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+#[bp(id = 0x18, state = Play, bound = Client)]
+pub struct DisguisedChatMessagePS2C<'a> {
+    pub message: Component<'a>,
+    #[bp(variant = VarInt)]
+    pub chat_type: i32,
+    pub chat_type_name: Component<'a>,
+    pub target_name: Option<Component<'a>>,
 }
 
 #[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
@@ -1065,34 +1088,28 @@ pub enum CustomSoundCategory {
     Voice,
 }
 
-#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
-#[bp(id = 0x17, state = Play, bound = Client)]
-pub struct CustomSoundEffectPS2C<'a> {
-    pub sound_name: Identifier<'a>,
-    pub sound_category: CustomSoundCategory,
-    #[bp(variant = "FixedPointNumber<i32, 3>")]
-    pub effect_position_x: f32,
-    #[bp(variant = "FixedPointNumber<i32, 3>")]
-    pub effect_position_y: f32,
-    #[bp(variant = "FixedPointNumber<i32, 3>")]
-    pub effect_position_z: f32,
-    pub volume: f32,
-    pub pitch: f32,
-    pub seed: i64,
-}
+// #[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
+// #[bp(id = 0x17, state = Play, bound = Client)]
+// pub struct CustomSoundEffectPS2C<'a> {
+//     pub sound_name: Identifier<'a>,
+//     pub sound_category: CustomSoundCategory,
+//     #[bp(variant = "FixedPointNumber<i32, 3>")]
+//     pub effect_position_x: f32,
+//     #[bp(variant = "FixedPointNumber<i32, 3>")]
+//     pub effect_position_y: f32,
+//     #[bp(variant = "FixedPointNumber<i32, 3>")]
+//     pub effect_position_z: f32,
+//     pub volume: f32,
+//     pub pitch: f32,
+//     pub seed: i64,
+// }
 
-#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x18, state = Play, bound = Client)]
-pub struct HideMessagePS2C<'a> {
-    #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
-    pub signature: &'a [u8],
-}
-
-#[derive(ProtocolAll, ProtocolPacket, Clone, PartialEq, Debug)]
-#[bp(id = 0x19, state = Play, bound = Client)]
-pub struct DisconnectPS2C<'a> {
-    pub reason: Component<'a>,
-}
+// #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
+// #[bp(id = 0x18, state = Play, bound = Client)]
+// pub struct HideMessagePS2C<'a> {
+//     #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+//     pub signature: &'a [u8],
+// }
 
 #[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
 #[bp(ty = i8)]
@@ -1101,13 +1118,13 @@ pub enum EntityEventStatus {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x1A, state = Play, bound = Client)]
+#[bp(id = 0x19, state = Play, bound = Client)]
 pub struct EntityEventPS2C {
     pub entity_id: i32,
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x1B, state = Play, bound = Client)]
+#[bp(id = 0x1A, state = Play, bound = Client)]
 pub struct ExplosionPS2C<'a> {
     pub location: Vector3D<f32>,
     pub strength: f32,
@@ -1117,7 +1134,7 @@ pub struct ExplosionPS2C<'a> {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x1C, state = Play, bound = Client)]
+#[bp(id = 0x1B, state = Play, bound = Client)]
 pub struct UnloadChunkPS2C {
     pub chunk_x: i32,
     pub chunk_z: i32,
@@ -1158,7 +1175,7 @@ pub enum GameEventRespawnScreen {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x1D, state = Play, bound = Client, ty = u8)]
+#[bp(id = 0x1C, state = Play, bound = Client, ty = u8)]
 pub enum GameEventPS2C {
     #[bp(ghost = [(order = begin, value = 0f32)])]
     NoRespawnBlockAvailable,
@@ -1181,7 +1198,7 @@ pub enum GameEventPS2C {
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
-#[bp(id = 0x1E, state = Play, bound = Client)]
+#[bp(id = 0x1D, state = Play, bound = Client)]
 pub struct OpenHorseScreenPS2C {
     pub window_id: u8,
     #[bp(variant = VarInt)]
@@ -1340,22 +1357,30 @@ impl<I: Iterator<Item=u64>, const COUNT: usize> Iterator for GapCompactLongsRead
     }
 }
 
+/// # Safety
+/// The caller must ensure that number of bits is less or equals to 64
+pub const unsafe fn compact_longs_array_length(elements: usize, bits: u8) -> usize {
+    debug_assert!(bits <= 64);
+    let elements_in_long = (64 / bits) as usize;
+    elements / elements_in_long + (if elements % elements_in_long == 0 { 0 } else { 1 })
+}
+
 pub const CHUNK_DATA_HEIGHT_MAP_KEY: &'static str = "MOTION_BLOCKING";
 
 // TODO should it be only MOTION_BLOCKING or WORLD_SURFACE also?
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 #[repr(transparent)]
-pub struct ChunkDataHeightMap<'a>(ChunkDataHeightMapInner<'a>);
+pub struct ChunkDataHeightMap<'a>(BorrowedLongArray<'a>);
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 #[doc(hidden)]
-pub enum ChunkDataHeightMapInner<'a> {
+pub enum BorrowedLongArray<'a> {
     Raw(&'a [u8]),
     Longs(&'a [u64]),
 }
 
-impl<'a> Iterator for ChunkDataHeightMapInner<'a> {
+impl<'a> Iterator for BorrowedLongArray<'a> {
     type Item = u64;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1372,7 +1397,7 @@ impl<'a> Iterator for ChunkDataHeightMapInner<'a> {
 
 impl<'a> IntoIterator for ChunkDataHeightMap<'a> {
     type Item = u64;
-    type IntoIter = GapCompactLongsReader<ChunkDataHeightMapInner<'a>, 256>;
+    type IntoIter = GapCompactLongsReader<BorrowedLongArray<'a>, 256>;
 
     fn into_iter(self) -> Self::IntoIter {
         // SAFETY: It is sure that array of inner struct is not empty.
@@ -1385,14 +1410,14 @@ impl<'a> ChunkDataHeightMap<'a> {
     /// The caller must ensure that the length of data slice is 37 * 8
     pub const unsafe fn new_raw(data: &'a [u8]) -> Self {
         debug_assert!(data.len() == 37 * 8);
-        Self(ChunkDataHeightMapInner::Raw(data))
+        Self(BorrowedLongArray::Raw(data))
     }
 
     /// # Safety.
     /// The caller must ensure that the length of data is 37
     pub const unsafe fn new_longs(data: &'a [u64]) -> Self {
         debug_assert!(data.len() == 37);
-        Self(ChunkDataHeightMapInner::Longs(data))
+        Self(BorrowedLongArray::Longs(data))
     }
 }
 
@@ -1405,7 +1430,7 @@ impl<'a> ProtocolReadable<'a> for ChunkDataHeightMap<'a> {
         read_compound_enter(cursor)?;
         match read_named_nbt_tag(CHUNK_DATA_HEIGHT_MAP_KEY, cursor)? {
             Some(NbtElement::LongArray(data)) => match data.len() == 37 * 8 {
-                true => Ok(Self(ChunkDataHeightMapInner::Raw(data))),
+                true => Ok(Self(BorrowedLongArray::Raw(data))),
                 false => Err(ProtocolError::Any(anyhow::Error::msg("MOTION_BLOCKING must be NbtLongArray with exactly 37 length")))
             },
             _ => Err(ProtocolError::Any(anyhow::Error::msg("MOTION_BLOCKING is not NbtLongArray or not present"))),
@@ -1419,11 +1444,11 @@ impl<'a> ProtocolWritable for ChunkDataHeightMap<'a> {
         12i8.write(writer)?;
         write_nbt_string(CHUNK_DATA_HEIGHT_MAP_KEY, writer)?;
         match self.0 {
-            ChunkDataHeightMapInner::Raw(raw) => {
+            BorrowedLongArray::Raw(raw) => {
                 37i32.write(writer)?; // the length of raw
                 writer.write_bytes(raw)
             }
-            ChunkDataHeightMapInner::Longs(array) => LengthProvidedArray::<i32, i32, u64, u64>::write_variant(array, writer)?,
+            BorrowedLongArray::Longs(array) => LengthProvidedArray::<i32, i32, u64, u64>::write_variant(array, writer)?,
         }
         0i8.write(writer)
     }
@@ -1477,7 +1502,6 @@ impl<T, const MAX_VALUE: i32, const LENGTH: usize> ProtocolSize for PalettedCont
     const SIZE: Range<u32> = u8::SIZE.start + VarInt::SIZE.start..u32::MAX;
 }
 
-
 impl<T, const MAX_VALUE: i32, const LENGTH: usize> PalettedContainer<T, MAX_VALUE, LENGTH>
     where
         T: PalettedContainerBitsDeterminer {
@@ -1502,21 +1526,76 @@ impl<T, const MAX_VALUE: i32, const LENGTH: usize> ProtocolWritable for Paletted
                 let bits_per_entry = T::get(values.len());
                 bits_per_entry.write(writer)?;
                 LengthProvidedArray::<i32, VarInt, i32, i32>::write_variant(values, writer)?;
-                // unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(indexes.iter().map(|val| *val as u64), bits_per_entry, writer) }
+                VarInt::write_variant(&(unsafe { compact_longs_array_length(LENGTH, bits_per_entry) } as i32), writer)?;
                 unsafe { GapCompactLongsWriter::new(writer, bits_per_entry).write_all_and_finish(indexes.iter().map(|val| *val as u64)) }
             }
             PalettedContainerInner::Direct(ref direct) => {
                 Self::MAX_BITS.write(writer)?;
-                // unsafe { write_compacted_array::<ProtocolLengthProvidedDeterminer<i32, VarInt>>(direct.iter().map(|val| *val as u64), Self::MAX_BITS, writer) }
+                VarInt::write_variant(&(unsafe { compact_longs_array_length(LENGTH, Self::MAX_BITS) } as i32), writer)?;
                 unsafe { GapCompactLongsWriter::new(writer, Self::MAX_BITS).write_all_and_finish(direct.iter().map(|val| *val as u64)) }
             }
         }
     }
 }
 
-// TODO PalettedContainer ProtocolReadable implementation
+impl<'a, T, const MAX_VALUE: i32, const LENGTH: usize> ProtocolReadable<'a> for PalettedContainer<T, MAX_VALUE, LENGTH>
+    where
+        T: PalettedContainerBitsDeterminer + 'a {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let bits = u8::read(cursor)?;
+        Ok(if bits == 0 {
+            let single = VarInt::read_variant(cursor)?;
+            let _: i32 = VarInt::read_variant(cursor)?;
+            Self::new_single(single)
+        } else if bits < Self::MAX_BITS {
+            let values = LengthProvidedArray::<i32, VarInt, i32, i32>::read_variant(cursor)?;
+            let count: i32 = VarInt::read_variant(cursor)?;
+            // It is said that count is ignored by vanilla client (should we ignore it also and calculate count by ourselves?)
+            debug_assert!(count == unsafe { compact_longs_array_length(LENGTH, bits) as i32 });
+            let indexes_iter: GapCompactLongsReader<_, LENGTH> = unsafe {
+                GapCompactLongsReader::new(
+                    ProtocolCursorIterator::<'_, 'a, _, _, u64, u64>::new(
+                        cursor,
+                        ProtocolCursorIteratorCountLimiter { count: count as _ }),
+                    bits,
+                )
+            }
+                .ok_or(ProtocolError::Any(anyhow::Error::msg("Empty array in paletted container (indirect variant)")))?;
+            Self::new_indirect(
+                values,
+                Box::new(
+                    indexes_iter
+                        .map(|val| val as i32)
+                        .collect::<Vec<_>>()
+                        .try_into()
+                        .map_err(|_| ProtocolError::Any(anyhow::Error::msg("Bad length of indexes")))?
+                ),
+            )
+        } else {
+            let count: i32 = VarInt::read_variant(cursor)?;
+            debug_assert!(count == unsafe { compact_longs_array_length(LENGTH, Self::MAX_BITS) as i32 });
+            let iter: GapCompactLongsReader<_, LENGTH> = unsafe {
+                GapCompactLongsReader::new(
+                    ProtocolCursorIterator::<'_, 'a, _, _, u64, u64>::new(
+                        cursor,
+                        ProtocolCursorIteratorCountLimiter { count: count as _ },
+                    ),
+                    Self::MAX_BITS,
+                )
+            }
+                .ok_or(ProtocolError::Any(anyhow::Error::msg("Empty array in paletted container (direct variant)")))?;
+            Self::new_direct(Box::new(
+                iter
+                    .map(|val| val as i32)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .map_err(|_| ProtocolError::Any(anyhow::Error::msg("Bad length of direct")))?
+            ))
+        })
+    }
+}
 
-#[derive(ProtocolWritable, ProtocolSize, Clone, Copy, Debug)]
+#[derive(ProtocolAll, Clone, Copy, Debug)]
 pub struct ChunkSectionsData<'a> {
     #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
     pub data: &'a [u8],
@@ -1543,17 +1622,154 @@ impl PalettedContainerBitsDeterminer for BiomesBits {
     }
 }
 
-#[derive(ProtocolWritable, ProtocolSize, Clone, Debug)]
+#[derive(ProtocolSize, ProtocolWritable, Clone, Debug)]
 pub struct ChunkSectionData {
     pub block_count: i16,
     pub block_states: PalettedContainer<BlockStatesBits, { bird_data::BLOCK_STATE_COUNT as i32 }, 4096>,
     pub biomes: PalettedContainer<BiomesBits, { bird_data::BIOME_COUNT as i32 }, 64>,
 }
 
-#[derive(ProtocolWritable, ProtocolSize, Clone, Copy, Debug)]
+// TODO fix issue with ProtocolReadable proc-macro (now it is not working)
+
+impl<'a> ProtocolReadable<'a> for ChunkSectionData {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        Ok(Self {
+            block_count: i16::read(cursor)?,
+            block_states: PalettedContainer::read(cursor)?,
+            biomes: PalettedContainer::read(cursor)?,
+        })
+    }
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
 pub struct ChunkData<'a> {
     pub height_map: ChunkDataHeightMap<'a>,
     pub chunk_sections: ChunkSectionsData<'a>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BitSet<'a>(BorrowedLongArray<'a>);
+
+impl<'a> BitSet<'a> {
+    pub fn get(&self, index: usize) -> Option<bool> {
+        match self.0 {
+            BorrowedLongArray::Raw(raw) => {
+
+                // All longs are inverted so how we can get required byte?
+                // Each byte contains 8 bits
+                // So to get the position of our index we should divide by 8 (or move right by 3)
+                // Because our long is inverted we should get the real position of byte
+                // When our index is 0 (0b0) the real index is 7 (0b111)
+                // When our index is 1 (0b1) the real index is 6 (0b110)
+                // And so on...
+                // So we should reverse last 3 bits
+                // And so we can get the real position of required bit
+
+                const MASK: usize = usize::MAX.overflowing_shl(3).0;
+                let mut order = (index & MASK) >> 3;
+                order = (order & MASK) | ((!order) & 0b111);
+                raw.get(order).map(|val| val & (1u8.overflowing_shl(index as u32).0) != 0)
+            },
+            BorrowedLongArray::Longs(words) => {
+                words.get(index >> 6).map(|val| val & (1u64.overflowing_shl(index as u32).0) != 0)
+            }
+        }
+    }
+}
+
+impl<'a> ProtocolSize for BitSet<'a> {
+    const SIZE: Range<u32> = (0..u32::MAX);
+}
+
+impl<'a> ProtocolWritable for BitSet<'a> {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        match self.0 {
+            BorrowedLongArray::Raw(raw) => {
+                VarInt::write_variant(&(raw.len() as i32 / 8), writer)?;
+                writer.write_bytes(raw);
+                Ok(())
+            }
+            BorrowedLongArray::Longs(longs) =>
+                LengthProvidedArray::<i32, VarInt, u64, u64>::write_variant(longs, writer),
+        }
+    }
+}
+
+impl<'a> ProtocolReadable<'a> for BitSet<'a> {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let length: i32 = VarInt::read_variant(cursor)?;
+        Ok(Self(BorrowedLongArray::Raw(cursor.take_bytes((length * 8) as usize)?)))
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LightArray<'a> {
+    // TODO change it to &'a [u8; 2048]
+    pub bytes: &'a [u8]
+}
+
+impl<'a> ProtocolSize for LightArray<'a> {
+    const SIZE: Range<u32> = (VarInt::SIZE.start + 2048..VarInt::SIZE.end + 2048);
+}
+
+impl<'a> ProtocolWritable for LightArray<'a> {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        VarInt::write_variant(&2048, writer)?;
+        writer.write_bytes(self.bytes);
+        Ok(())
+    }
+}
+
+impl<'a> ProtocolReadable<'a> for LightArray<'a> {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let length: i32 = VarInt::read_variant(cursor)?;
+        if length != 2048i32 {
+             return Err(ProtocolError::Any(anyhow::Error::msg("The length of light array is not 2048")));
+        }
+        Ok(Self { bytes: cursor.take_bytes(2048)? })
+    }
+}
+
+#[derive(ProtocolAll, Clone, Debug)]
+pub struct LightData<'a> {
+    pub trust_edges: bool,
+    pub sky_light_mask: BitSet<'a>,
+    pub block_light_mask: BitSet<'a>,
+    pub empty_sky_light_mask: BitSet<'a>,
+    pub empty_block_light_mask: BitSet<'a>,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, LightArray<'a>, LightArray<'a>>")]
+    pub sky_light_arrays: Cow<'a, [LightArray<'a>]>,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, LightArray<'a>, LightArray<'a>>")]
+    pub block_light_arrays: Cow<'a, [LightArray<'a>]>,
+}
+
+#[bitfield(u8)]
+#[derive(ProtocolAll)]
+pub struct PackedBlockChunkXZ {
+    #[bits(4)]
+    pub x: u8,
+    #[bits(4)]
+    pub z: u8,
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+pub struct ChunkDataAndUpdateLightBlockEntity<'a> {
+    pub xz: PackedBlockChunkXZ,
+    pub y: i16,
+    #[bp(variant = VarInt)]
+    pub ty: i32,
+    #[bp(variant = NbtBytes)]
+    pub data: &'a [u8],
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x20, state = Play, bound = Client)]
+pub struct ChunkDataAndUpdateLightPS2C<'a> {
+    pub chunk: Vector2D<i32>,
+    pub chunk_data: ChunkData<'a>,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, ChunkDataAndUpdateLightBlockEntity<'a>, ChunkDataAndUpdateLightBlockEntity<'a>>")]
+    pub block_entities: Cow<'a, [ChunkDataAndUpdateLightBlockEntity<'a>]>,
+    pub light_data: LightData<'a>,
 }
 
 #[cfg(test)]
@@ -1606,5 +1822,17 @@ mod tests {
             0b111111111_001111111_000011111_000000111_000000001_0_u64.write(&mut res_vec).unwrap();
         }
         assert_eq!(vec, res_vec);
+    }
+
+    #[test]
+    fn gap_compact_longs_length_test() {
+        unsafe {
+            assert_eq!(compact_longs_array_length(11, 15), 3);
+            assert_eq!(compact_longs_array_length(12, 15), 3);
+            assert_eq!(compact_longs_array_length(13, 15), 4);
+            assert_eq!(compact_longs_array_length(14, 15), 4);
+            assert_eq!(compact_longs_array_length(15, 15), 4);
+            assert_eq!(compact_longs_array_length(16, 15), 4);
+        }
     }
 }

@@ -718,6 +718,181 @@ mod fastnbt_impls {
     }
 }
 
+mod nbt {
+    use super::*;
+
+    pub struct ProtocolSkipCursor<'a, C: ProtocolCursor<'a>> {
+        pub cursor: C,
+        pub length: usize,
+        _marker: PhantomData<&'a ()>,
+    }
+
+    impl<'a, C: ProtocolCursor<'a>> ProtocolSkipCursor<'a, C> {
+        pub fn new(cursor: C) -> Self {
+            Self {
+                cursor,
+                length: 0,
+                _marker: PhantomData,
+            }
+        }
+
+        fn skip(&mut self, length: usize) -> ProtocolResult<()> {
+            self.cursor.take_bytes(length).map(|_| ())
+        }
+    }
+
+    impl<'a, C: ProtocolCursor<'a>> ProtocolCursor<'a> for ProtocolSkipCursor<'a, C> {
+        fn take_byte(&mut self) -> ProtocolResult<u8> {
+            self.length += 1;
+            self.cursor.take_byte()
+        }
+
+        fn take_bytes(&mut self, length: usize) -> ProtocolResult<&'a [u8]> {
+            self.length += length;
+            self.cursor.take_bytes(length)
+        }
+
+        fn remaining_bytes(&self) -> usize {
+            self.cursor.remaining_bytes()
+        }
+
+        fn take_cursor(&self) -> Self {
+            ProtocolSkipCursor {
+                cursor: self.cursor.take_cursor(),
+                length: self.length,
+                _marker: PhantomData,
+            }
+        }
+
+        fn has_bytes(&self, length: usize) -> bool {
+            self.cursor.has_bytes(length)
+        }
+    }
+
+    pub fn skip_string<'a, C: ProtocolCursor<'a>>(cursor: &mut ProtocolSkipCursor<'a, C>) -> ProtocolResult<()> {
+        let length = u16::read(cursor)?;
+        cursor.skip(length as usize)
+    }
+
+    pub fn skip_compound<'a, C: ProtocolCursor<'a>>(cursor: &mut ProtocolSkipCursor<'a, C>) -> ProtocolResult<()> {
+        let tag = u8::read(cursor)?;
+        if tag != 10 {
+            return Err(ProtocolError::Any(anyhow::Error::msg("Nbt does not start with compound")));
+        }
+        skip_string(cursor)?;
+        loop {
+            let tag = u8::read(cursor)?;
+            if tag == 0 { break; }
+            skip_string(cursor)?;
+            skip_tag(cursor, tag, 1)?;
+        }
+        Ok(())
+    }
+
+    pub fn skip_tag<'a, C: ProtocolCursor<'a>>(cursor: &mut ProtocolSkipCursor<'a, C>, tag: u8, times: usize) -> ProtocolResult<()> {
+        match tag {
+            0 => Ok(()),
+            1 => cursor.skip(1 * times),
+            2 => cursor.skip(2 * times),
+            3 => cursor.skip(4 * times),
+            4 => cursor.skip(8 * times),
+            5 => cursor.skip(4 * times),
+            6 => cursor.skip(8 * times),
+            7 => {
+                for _ in 0..times {
+                    let length = i32::read(cursor)?;
+                    cursor.skip(length as usize)?
+                }
+                Ok(())
+            }
+            8 => {
+                for _ in 0..times {
+                    skip_string(cursor)?
+                }
+                Ok(())
+            }
+            9 => {
+                for _ in 0..times {
+                    let tag = u8::read(cursor)?;
+                    let times = i32::read(cursor)?;
+                    skip_tag(cursor, tag, times as usize)?
+                }
+                Ok(())
+            }
+            10 => {
+                for _ in 0..times {
+                    skip_compound(cursor)?
+                }
+                Ok(())
+            }
+            11 => {
+                for _ in 0..times {
+                    let length = i32::read(cursor)?;
+                    cursor.skip(length as usize * 4)?;
+                }
+                Ok(())
+            }
+            12 => {
+                for _ in 0..times {
+                    let length = i32::read(cursor)?;
+                    cursor.skip(length as usize * 8)?;
+                }
+                Ok(())
+            }
+            _ => Err(ProtocolError::Any(anyhow::Error::msg("Bad nbt tag"))),
+        }
+    }
+}
+
+impl ProtocolSize for NbtBytes { const SIZE: Range<u32> = Nbt::SIZE; }
+
+impl ProtocolVariantWritable<[u8]> for NbtBytes {
+    fn write_variant<W: ProtocolWriter>(object: &[u8], writer: &mut W) -> anyhow::Result<()> {
+        Ok(writer.write_bytes(object))
+    }
+}
+
+impl<'a> ProtocolVariantWritable<&'a [u8]> for NbtBytes {
+    fn write_variant<W: ProtocolWriter>(object: &&'a [u8], writer: &mut W) -> anyhow::Result<()> {
+        Self::write_variant(*object, writer)
+    }
+}
+
+impl ProtocolVariantWritable<Vec<u8>> for NbtBytes {
+    fn write_variant<W: ProtocolWriter>(object: &Vec<u8>, writer: &mut W) -> anyhow::Result<()> {
+        Self::write_variant(object.as_slice(), writer)
+    }
+}
+
+impl<'a> ProtocolVariantWritable<Cow<'a, [u8]>> for NbtBytes {
+    fn write_variant<W: ProtocolWriter>(object: &Cow<'a, [u8]>, writer: &mut W) -> anyhow::Result<()> {
+        match object {
+            Cow::Owned(owned) => Self::write_variant(owned, writer),
+            Cow::Borrowed(borrowed) => Self::write_variant(borrowed, writer),
+        }
+    }
+}
+
+impl<'a> ProtocolVariantReadable<'a, &'a [u8]> for NbtBytes {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<&'a [u8]> {
+        let mut skip_cursor = nbt::ProtocolSkipCursor::new(cursor.take_cursor());
+        nbt::skip_compound(&mut skip_cursor)?;
+        cursor.take_bytes(skip_cursor.length)
+    }
+}
+
+impl<'a> ProtocolVariantReadable<'a, Vec<u8>> for NbtBytes {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Vec<u8>> {
+        Self::read_variant(cursor).map(|slice: &'a [u8]| slice.to_owned())
+    }
+}
+
+impl<'a> ProtocolVariantReadable<'a, Cow<'a, [u8]>> for NbtBytes {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Cow<'a, [u8]>> {
+        Self::read_variant(cursor).map(|slice| Cow::Borrowed(slice))
+    }
+}
+
 delegate_size!(BlockPosition = u64);
 
 #[cfg(feature = "euclid")]
@@ -731,11 +906,25 @@ mod euclid_impls {
         );
     }
 
+    impl<T: ProtocolSize, U> ProtocolSize for Vector2D<T, U> {
+        const SIZE: Range<u32> = (
+            add_u32_without_overflow_array([T::SIZE.start; 2])..
+                add_u32_without_overflow_array([T::SIZE.end; 2])
+        );
+    }
+
     impl<T: ProtocolWritable, U> ProtocolWritable for Vector3D<T, U> {
         fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
             self.x.write(writer)?;
             self.y.write(writer)?;
             self.z.write(writer)
+        }
+    }
+
+    impl<T: ProtocolWritable, U> ProtocolWritable for Vector2D<T, U> {
+        fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+            self.x.write(writer)?;
+            self.y.write(writer)
         }
     }
 
@@ -754,6 +943,16 @@ mod euclid_impls {
                 x: T::read(cursor)?,
                 y: T::read(cursor)?,
                 z: T::read(cursor)?,
+                _unit: PhantomData,
+            })
+        }
+    }
+
+    impl<'a, T: ProtocolReadable<'a>, U: 'a> ProtocolReadable<'a> for Vector2D<T, U> {
+        fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+            Ok(Self {
+                x: T::read(cursor)?,
+                y: T::read(cursor)?,
                 _unit: PhantomData,
             })
         }
@@ -815,3 +1014,47 @@ macro_rules! fixed_point_number_impl {
 }
 
 fixed_point_number_impl!(i16, u16, i32, u32, i64, u64);
+
+impl ProtocolCursorIteratorLimiter for ProtocolCursorIteratorCountLimiter {
+    fn next(&mut self) -> bool {
+        if self.count == 0 { return false; }
+        self.count -= 1;
+        true
+    }
+}
+
+impl ProtocolCursorIteratorLimiter for ProtocolCursorIteratorNoLimiter {
+    fn next(&mut self) -> bool {
+        true
+    }
+}
+
+impl<'a, 'b, C, L, V, VV> ProtocolCursorIterator<'a, 'b, C, L, V, VV> {
+    pub fn new(cursor: &'a mut C, limiter: L) -> Self {
+        Self {
+            cursor,
+            limiter,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, 'b, C: ProtocolCursor<'b>, L: ProtocolCursorIteratorLimiter, V, VV: ProtocolVariantReadable<'b, V>> Iterator for ProtocolCursorIterator<'a, 'b, C, L, V, VV> {
+    type Item = V;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.limiter.next() { return None; }
+        match VV::read_variant(self.cursor) {
+            Ok(val) => Some(val),
+            Err(ProtocolError::End) => None,
+            Err(ProtocolError::Any(err)) => {
+                // TODO think about error handling
+                if cfg!(debug_assertions) {
+                    panic!("{}", err);
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
