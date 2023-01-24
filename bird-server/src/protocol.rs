@@ -1651,30 +1651,55 @@ pub struct ChunkData<'a> {
 pub struct BitSet<'a>(BorrowedLongArray<'a>);
 
 impl<'a> BitSet<'a> {
+    fn get_bit_from_words(words: &[u64], index: usize) -> Option<bool> {
+        words.get(Self::get_word_index(index)).map(|val| val & (1u64.overflowing_shl(index as u32).0) != 0)
+    }
+
+    /// # Safety
+    /// The caller must ensure that the length of raw can be divided by 8
+    unsafe fn get_bit_from_raw(raw: &[u8], index: usize) -> Option<bool> {
+        // All longs are inverted so how we can get required byte?
+        // Each byte contains 8 bits
+        // So to get the position of our index we should divide by 8 (or move right by 3)
+        // Because our long is inverted we should get the real position of byte
+        // When our index is 0 (0b0) the real index is 7 (0b111)
+        // When our index is 1 (0b1) the real index is 6 (0b110)
+        // And so on...
+        // So we should reverse last 3 bits
+        // And so we can get the real position of required bit
+        const MASK: usize = usize::MAX.overflowing_shl(3).0;
+        let mut order = (index & MASK) >> 3;
+        order = (order & MASK) | ((!order) & 0b111);
+        raw.get(order).map(|val| val & (1u8.overflowing_shl(index as u32).0) != 0)
+    }
+
+    #[inline]
+    const fn get_word_index(index: usize) -> usize {
+        index >> 6
+    }
+
+    pub const fn new_words(words: &'a [u64]) -> Self {
+        Self(BorrowedLongArray::Longs(words))
+    }
+
+    /// # Safety
+    /// The caller must ensure that the length of raw can be divided by 8
+    pub const unsafe fn new_raw(raw: &'a [u8]) -> Self {
+        debug_assert!(raw.len() % 8 == 0);
+        Self(BorrowedLongArray::Raw(raw))
+    }
+
     pub fn get(&self, index: usize) -> Option<bool> {
         match self.0 {
-            BorrowedLongArray::Raw(raw) => {
-
-                // All longs are inverted so how we can get required byte?
-                // Each byte contains 8 bits
-                // So to get the position of our index we should divide by 8 (or move right by 3)
-                // Because our long is inverted we should get the real position of byte
-                // When our index is 0 (0b0) the real index is 7 (0b111)
-                // When our index is 1 (0b1) the real index is 6 (0b110)
-                // And so on...
-                // So we should reverse last 3 bits
-                // And so we can get the real position of required bit
-
-                const MASK: usize = usize::MAX.overflowing_shl(3).0;
-                let mut order = (index & MASK) >> 3;
-                order = (order & MASK) | ((!order) & 0b111);
-                raw.get(order).map(|val| val & (1u8.overflowing_shl(index as u32).0) != 0)
-            },
-            BorrowedLongArray::Longs(words) => {
-                words.get(index >> 6).map(|val| val & (1u64.overflowing_shl(index as u32).0) != 0)
-            }
+            BorrowedLongArray::Raw(raw) => unsafe { Self::get_bit_from_raw(raw, index) },
+            BorrowedLongArray::Longs(words) => Self::get_bit_from_words(words, index)
         }
     }
+
+    pub fn long_iter(&self) -> impl Iterator<Item = u64> + 'a {
+        self.clone().0
+    }
+
 }
 
 impl<'a> ProtocolSize for BitSet<'a> {
@@ -1702,10 +1727,46 @@ impl<'a> ProtocolReadable<'a> for BitSet<'a> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct OwnedBitSet {
+    pub words: Vec<u64>,
+}
+
+impl OwnedBitSet {
+
+    pub fn new() -> Self {
+        Self { words: Vec::new() }
+    }
+
+    pub fn get_bit_set(&self) -> BitSet {
+        BitSet::new_words(&self.words)
+    }
+
+    pub fn get(&self, index: usize) -> Option<bool> {
+        BitSet::get_bit_from_words(&self.words, index)
+    }
+
+    pub fn set(&mut self, index: usize) {
+        let word_index = BitSet::get_word_index(index);
+        if word_index >= self.words.len() {
+            self.words.resize(word_index + 1, 0);
+        }
+        self.words[word_index] |= (1u64.overflowing_shl(index as u32).0);
+    }
+
+    pub fn clear(&mut self, index: usize) {
+        let word_index = BitSet::get_word_index(index);
+        if word_index < self.words.len() {
+            self.words[word_index] &= !(1u64.overflowing_shl(index as u32).0);
+        }
+    }
+
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct LightArray<'a> {
     // TODO change it to &'a [u8; 2048]
-    pub bytes: &'a [u8]
+    bytes: &'a [u8]
 }
 
 impl<'a> ProtocolSize for LightArray<'a> {
@@ -1728,6 +1789,85 @@ impl<'a> ProtocolReadable<'a> for LightArray<'a> {
         }
         Ok(Self { bytes: cursor.take_bytes(2048)? })
     }
+}
+
+impl<'a> LightArray<'a> {
+
+    const unsafe fn get_index(position: Vector3D<u8>) -> (usize, bool) {
+        debug_assert!(position.x < 16);
+        debug_assert!(position.y < 16);
+        debug_assert!(position.z < 16);
+        let index = ((position.y as usize) << 8) | ((position.z as usize) << 4) | (position.x as usize);
+        (index >> 1, index & 0x1 == 0)
+    }
+
+    const unsafe fn get_from_array(data: &[u8], position: Vector3D<u8>) -> u8 {
+        let (index, right) = Self::get_index(position);
+        match right {
+            true => data[index] & 0xf,
+            false => (data[index] & 0xf0) >> 4,
+        }
+    }
+
+    /// # Safety
+    /// The caller must ensure that the length of bytes is 2048
+    pub const unsafe fn new(bytes: &'a [u8]) -> Self {
+        debug_assert!(bytes.len() == 2048);
+        Self { bytes }
+    }
+
+    pub const fn get_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// # Safety
+    /// The caller must ensure that each parameter is less than 16
+    pub const unsafe fn get(&self, position: Vector3D<u8>) -> u8 {
+        Self::get_from_array(self.bytes, position)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct OwnedLightArray {
+    data: [u8; 2048],
+    // We are counting not empty bytes
+    not_empty: u16,
+}
+
+impl OwnedLightArray {
+
+    pub const fn new() -> Self {
+        Self { data: [0; 2048], not_empty: 0 }
+    }
+
+    /// # Safety
+    /// The caller must ensure that each parameter is less than 16
+    pub unsafe fn set(&mut self, position: Vector3D<u8>, value: u8) {
+        debug_assert!(value < 16);
+        let (index, right) = LightArray::get_index(position);
+        let res = match right {
+            true => self.data[index] & 0xf0 | value,
+            false => self.data[index] & 0x0f | (value << 4),
+        };
+        if self.data[index] != 0 { self.not_empty -= 1 };
+        if res != 0 { self.not_empty += 1 };
+        self.data[index] = res;
+    }
+
+    /// # Safety
+    /// The caller must ensure that each parameter is less than 16
+    pub const unsafe fn get(&self, position: Vector3D<u8>) -> u8 {
+        LightArray::get_from_array(&self.data, position)
+    }
+
+    pub const fn as_light_array(&self) -> LightArray {
+        unsafe { LightArray::new(&self.data) }
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.not_empty == 0
+    }
+
 }
 
 #[derive(ProtocolAll, Clone, Debug)]
@@ -1835,4 +1975,75 @@ mod tests {
             assert_eq!(compact_longs_array_length(16, 15), 4);
         }
     }
+
+    #[test]
+    fn bit_set_test() {
+        let mut owned_bit_set = OwnedBitSet::new();
+        owned_bit_set.set(0);
+        owned_bit_set.set(3);
+        {
+            let bit_set = owned_bit_set.get_bit_set();
+            assert_eq!(bit_set.get(0), Some(true));
+            assert_eq!(bit_set.get(3), Some(true));
+            assert_eq!(bit_set.get(1), Some(false));
+            assert_eq!(bit_set.get(64), None);
+            let mut iter = bit_set.long_iter();
+            assert_eq!(iter.next(), Some(0b1001));
+            assert_eq!(iter.next(), None);
+        }
+        owned_bit_set.set(64);
+        owned_bit_set.set(65);
+        owned_bit_set.set(67);
+        {
+            let bit_set = owned_bit_set.get_bit_set();
+            assert_eq!(bit_set.get(0), Some(true));
+            assert_eq!(bit_set.get(3), Some(true));
+            assert_eq!(bit_set.get(1), Some(false));
+            assert_eq!(bit_set.get(64), Some(true));
+            assert_eq!(bit_set.get(65), Some(true));
+            assert_eq!(bit_set.get(67), Some(true));
+            assert_eq!(bit_set.get(66), Some(false));
+            let mut iter = bit_set.long_iter();
+            assert_eq!(iter.next(), Some(0b1001));
+            assert_eq!(iter.next(), Some(0b1011));
+            assert_eq!(iter.next(), None);
+            let mut raw = Vec::new();
+            bit_set.long_iter().for_each(|n| n.write(&mut raw).unwrap());
+            let bit_set = unsafe { BitSet::new_raw(&raw) };
+            for i in 0..127 {
+                assert_eq!(
+                    bit_set.get(i),
+                    Some(match i {
+                        0 | 3 | 64 | 65 | 67 => true,
+                        _ => false,
+                    })
+                )
+            }
+            assert_eq!(bit_set.get(128), None);
+        }
+    }
+
+    #[test]
+    fn light_array_test() {
+        unsafe {
+            let mut owned_light_array = OwnedLightArray::new();
+            assert_eq!(owned_light_array.is_empty(), true);
+            owned_light_array.set(Vector3D::new(0, 0, 0), 15);
+            owned_light_array.set(Vector3D::new(1, 1, 1), 13);
+            owned_light_array.set(Vector3D::new(2, 1, 1), 11);
+            {
+                let light_array = owned_light_array.as_light_array();
+                assert_eq!(light_array.get(Vector3D::new(0, 0, 0)), 15);
+                assert_eq!(light_array.get(Vector3D::new(1, 1, 1)), 13);
+                assert_eq!(light_array.get(Vector3D::new(2, 1, 1)), 11);
+                assert_eq!(light_array.get(Vector3D::new(2, 2, 1)), 0);
+                assert_eq!(light_array.get_bytes()[0], 15);
+            }
+            owned_light_array.set(Vector3D::new(0, 0, 0), 0);
+            owned_light_array.set(Vector3D::new(1, 1, 1), 0);
+            owned_light_array.set(Vector3D::new(2, 1, 1), 0);
+            assert_eq!(owned_light_array.is_empty(), true);
+        }
+    }
+
 }
