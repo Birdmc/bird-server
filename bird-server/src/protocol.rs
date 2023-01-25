@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
 use std::ops::{Range, Shl};
 use bitfield_struct::bitfield;
 use euclid::default::{Vector2D, Vector3D};
@@ -1696,10 +1697,9 @@ impl<'a> BitSet<'a> {
         }
     }
 
-    pub fn long_iter(&self) -> impl Iterator<Item = u64> + 'a {
+    pub fn long_iter(&self) -> impl Iterator<Item=u64> + 'a {
         self.clone().0
     }
-
 }
 
 impl<'a> ProtocolSize for BitSet<'a> {
@@ -1733,7 +1733,6 @@ pub struct OwnedBitSet {
 }
 
 impl OwnedBitSet {
-
     pub fn new() -> Self {
         Self { words: Vec::new() }
     }
@@ -1760,13 +1759,12 @@ impl OwnedBitSet {
             self.words[word_index] &= !(1u64.overflowing_shl(index as u32).0);
         }
     }
-
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct LightArray<'a> {
     // TODO change it to &'a [u8; 2048]
-    bytes: &'a [u8]
+    bytes: &'a [u8],
 }
 
 impl<'a> ProtocolSize for LightArray<'a> {
@@ -1785,14 +1783,13 @@ impl<'a> ProtocolReadable<'a> for LightArray<'a> {
     fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
         let length: i32 = VarInt::read_variant(cursor)?;
         if length != 2048i32 {
-             return Err(ProtocolError::Any(anyhow::Error::msg("The length of light array is not 2048")));
+            return Err(ProtocolError::Any(anyhow::Error::msg("The length of light array is not 2048")));
         }
         Ok(Self { bytes: cursor.take_bytes(2048)? })
     }
 }
 
 impl<'a> LightArray<'a> {
-
     const unsafe fn get_index(position: Vector3D<u8>) -> (usize, bool) {
         debug_assert!(position.x < 16);
         debug_assert!(position.y < 16);
@@ -1835,7 +1832,6 @@ pub struct OwnedLightArray {
 }
 
 impl OwnedLightArray {
-
     pub const fn new() -> Self {
         Self { data: [0; 2048], not_empty: 0 }
     }
@@ -1867,7 +1863,6 @@ impl OwnedLightArray {
     pub const fn is_empty(&self) -> bool {
         self.not_empty == 0
     }
-
 }
 
 #[derive(ProtocolAll, Clone, Debug)]
@@ -1910,6 +1905,614 @@ pub struct ChunkDataAndUpdateLightPS2C<'a> {
     #[bp(variant = "LengthProvidedArray<i32, VarInt, ChunkDataAndUpdateLightBlockEntity<'a>, ChunkDataAndUpdateLightBlockEntity<'a>>")]
     pub block_entities: Cow<'a, [ChunkDataAndUpdateLightBlockEntity<'a>]>,
     pub light_data: LightData<'a>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SmokeDirection {
+    Down,
+    Up,
+    North,
+    South,
+    West,
+    East,
+}
+
+impl TryFrom<u8> for SmokeDirection {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(SmokeDirection::Down),
+            1 => Ok(SmokeDirection::Up),
+            2 => Ok(SmokeDirection::North),
+            3 => Ok(SmokeDirection::South),
+            4 => Ok(SmokeDirection::West),
+            5 => Ok(SmokeDirection::East),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WorldEvent {
+    // Sounds
+    Dispense,
+    FailedDispense,
+    DispenserShoots,
+    EnderEyeLaunches,
+    FireworkShots,
+    IronDoorOpens,
+    WoodenDoorOpens,
+    WoodenTrapdoorOpens,
+    FenceGateOpens,
+    FireExtinguishes,
+    PlayRecord { record_id: i32 },
+    IronDoorCloses,
+    WoodenDoorCloses,
+    WoodenTrapDoorCloses,
+    FenceGateCloses,
+    GhastWarns,
+    GhastShoots,
+    EnderDragonShoots,
+    BlazeShoots,
+    ZombieAttacksWoodenDoor,
+    ZombieAttacksIronDoor,
+    ZombieBreaksWoodenDoor,
+    WitherBreaksBlock,
+    WitherSpawns,
+    WitherShoots,
+    BatTakesOff,
+    ZombieInfects,
+    ZombieVillagerConverts,
+    EnderDragonDeath,
+    AnvilDestroy,
+    AnvilUse,
+    AnvilLand,
+    PortalTravel,
+    ChorusFlowerGrown,
+    ChorusFlowerDeath,
+    BrewingStandBrew,
+    IronTrapdoorOpens,
+    IronTrapdoorCloses,
+    OverworldEndPortalCreates,
+    PhantomBites,
+    ZombieConvertsToDrowned,
+    HuskConvertsToZombie,
+    GrindstoneUsed,
+    BookPageTurned,
+    // 1043
+    // Particles
+    ComposterComposts,
+    LavaConvertsBlock,
+    RedstoneTorchBurnsOut,
+    EnderEyePlace,
+    // 1503
+    Smoke { direction: SmokeDirection },
+    BlockBreak { block_state: i32 },
+    SplashPotion { color: i32 },
+    EyeOfEnderBreak,
+    MobSpawn,
+    BonemealParticles { amount: i32 },
+    DragonBreath,
+    InstantSplashPotion { color: i32 },
+    EnderDragonDestroysBlock,
+    WetSpongeVaporizesInNether,
+    // 2009
+    EndGatewaySpawn,
+    EnderDragonGrowl,
+    ElectricSpark,
+    CopperApplyWax,
+    CopperRemoveWax,
+    CopperScrapeOxidation, // 3005
+}
+
+impl WorldEvent {
+    pub fn new(id: i32, value: i32) -> Option<Self> {
+        Some(match id {
+            1000 => WorldEvent::Dispense,
+            1001 => WorldEvent::FailedDispense,
+            1002 => WorldEvent::DispenserShoots,
+            1003 => WorldEvent::EnderEyeLaunches,
+            1004 => WorldEvent::FireworkShots,
+            1005 => WorldEvent::IronDoorOpens,
+            1006 => WorldEvent::WoodenDoorOpens,
+            1007 => WorldEvent::WoodenTrapdoorOpens,
+            1008 => WorldEvent::FenceGateOpens,
+            1009 => WorldEvent::FireExtinguishes,
+            1010 => WorldEvent::PlayRecord { record_id: value },
+            1011 => WorldEvent::IronDoorCloses,
+            1012 => WorldEvent::WoodenDoorCloses,
+            1013 => WorldEvent::WoodenTrapDoorCloses,
+            1014 => WorldEvent::FenceGateCloses,
+            1015 => WorldEvent::GhastWarns,
+            1016 => WorldEvent::GhastShoots,
+            1017 => WorldEvent::EnderDragonShoots,
+            1018 => WorldEvent::BlazeShoots,
+            1019 => WorldEvent::ZombieAttacksWoodenDoor,
+            1020 => WorldEvent::ZombieAttacksIronDoor,
+            1021 => WorldEvent::ZombieBreaksWoodenDoor,
+            1022 => WorldEvent::WitherBreaksBlock,
+            1023 => WorldEvent::WitherSpawns,
+            1024 => WorldEvent::WitherShoots,
+            1025 => WorldEvent::BatTakesOff,
+            1026 => WorldEvent::ZombieInfects,
+            1027 => WorldEvent::ZombieVillagerConverts,
+            1028 => WorldEvent::EnderDragonDeath,
+            1029 => WorldEvent::AnvilDestroy,
+            1030 => WorldEvent::AnvilUse,
+            1031 => WorldEvent::AnvilLand,
+            1032 => WorldEvent::PortalTravel,
+            1033 => WorldEvent::ChorusFlowerGrown,
+            1034 => WorldEvent::ChorusFlowerDeath,
+            1035 => WorldEvent::BrewingStandBrew,
+            1036 => WorldEvent::IronTrapdoorOpens,
+            1037 => WorldEvent::IronTrapdoorCloses,
+            1038 => WorldEvent::OverworldEndPortalCreates,
+            1039 => WorldEvent::PhantomBites,
+            1040 => WorldEvent::ZombieConvertsToDrowned,
+            1041 => WorldEvent::HuskConvertsToZombie,
+            1042 => WorldEvent::GrindstoneUsed,
+            1043 => WorldEvent::BookPageTurned,
+            1500 => WorldEvent::ComposterComposts,
+            1501 => WorldEvent::LavaConvertsBlock,
+            1502 => WorldEvent::RedstoneTorchBurnsOut,
+            1503 => WorldEvent::EnderEyePlace,
+            2000 => WorldEvent::Smoke { direction: SmokeDirection::try_from(value as u8).ok()? },
+            2001 => WorldEvent::BlockBreak { block_state: value },
+            2002 => WorldEvent::SplashPotion { color: value },
+            2003 => WorldEvent::EyeOfEnderBreak,
+            2004 => WorldEvent::MobSpawn,
+            2005 => WorldEvent::BonemealParticles { amount: value },
+            2006 => WorldEvent::DragonBreath,
+            2007 => WorldEvent::InstantSplashPotion { color: value },
+            2008 => WorldEvent::EnderDragonDestroysBlock,
+            2009 => WorldEvent::WetSpongeVaporizesInNether,
+            3000 => WorldEvent::EndGatewaySpawn,
+            3001 => WorldEvent::EnderDragonGrowl,
+            3002 => WorldEvent::ElectricSpark,
+            3003 => WorldEvent::CopperApplyWax,
+            3004 => WorldEvent::CopperRemoveWax,
+            3005 => WorldEvent::CopperScrapeOxidation,
+            _ => None?
+        })
+    }
+
+    pub fn get_id_value(&self) -> (i32, i32) {
+        match self {
+            WorldEvent::Dispense => (1000, 0),
+            WorldEvent::FailedDispense => (1001, 0),
+            WorldEvent::DispenserShoots => (1002, 0),
+            WorldEvent::EnderEyeLaunches => (1003, 0),
+            WorldEvent::FireworkShots => (1004, 0),
+            WorldEvent::IronDoorOpens => (1005, 0),
+            WorldEvent::WoodenDoorOpens => (1006, 0),
+            WorldEvent::WoodenTrapdoorOpens => (1007, 0),
+            WorldEvent::FenceGateOpens => (1008, 0),
+            WorldEvent::FireExtinguishes => (1009, 0),
+            WorldEvent::PlayRecord { record_id } => (1010, *record_id),
+            WorldEvent::IronDoorCloses => (1011, 0),
+            WorldEvent::WoodenDoorCloses => (1012, 0),
+            WorldEvent::WoodenTrapDoorCloses => (1013, 0),
+            WorldEvent::FenceGateCloses => (1014, 0),
+            WorldEvent::GhastWarns => (1015, 0),
+            WorldEvent::GhastShoots => (1016, 0),
+            WorldEvent::EnderDragonShoots => (1017, 0),
+            WorldEvent::BlazeShoots => (1018, 0),
+            WorldEvent::ZombieAttacksWoodenDoor => (1019, 0),
+            WorldEvent::ZombieAttacksIronDoor => (1020, 0),
+            WorldEvent::ZombieBreaksWoodenDoor => (1021, 0),
+            WorldEvent::WitherBreaksBlock => (1022, 0),
+            WorldEvent::WitherSpawns => (1023, 0),
+            WorldEvent::WitherShoots => (1024, 0),
+            WorldEvent::BatTakesOff => (1025, 0),
+            WorldEvent::ZombieInfects => (1026, 0),
+            WorldEvent::ZombieVillagerConverts => (1027, 0),
+            WorldEvent::EnderDragonDeath => (1028, 0),
+            WorldEvent::AnvilDestroy => (1029, 0),
+            WorldEvent::AnvilUse => (1030, 0),
+            WorldEvent::AnvilLand => (1031, 0),
+            WorldEvent::PortalTravel => (1032, 0),
+            WorldEvent::ChorusFlowerGrown => (1033, 0),
+            WorldEvent::ChorusFlowerDeath => (1034, 0),
+            WorldEvent::BrewingStandBrew => (1035, 0),
+            WorldEvent::IronTrapdoorOpens => (1036, 0),
+            WorldEvent::IronTrapdoorCloses => (1037, 0),
+            WorldEvent::OverworldEndPortalCreates => (1038, 0),
+            WorldEvent::PhantomBites => (1039, 0),
+            WorldEvent::ZombieConvertsToDrowned => (1040, 0),
+            WorldEvent::HuskConvertsToZombie => (1041, 0),
+            WorldEvent::GrindstoneUsed => (1042, 0),
+            WorldEvent::BookPageTurned => (1043, 0),
+            WorldEvent::ComposterComposts => (1500, 0),
+            WorldEvent::LavaConvertsBlock => (1501, 0),
+            WorldEvent::RedstoneTorchBurnsOut => (1502, 0),
+            WorldEvent::EnderEyePlace => (1503, 0),
+            WorldEvent::Smoke { direction } => (2000, (*direction) as i32),
+            WorldEvent::BlockBreak { block_state } => (2001, *block_state),
+            WorldEvent::SplashPotion { color } => (2002, *color),
+            WorldEvent::EyeOfEnderBreak => (2003, 0),
+            WorldEvent::MobSpawn => (2004, 0),
+            WorldEvent::BonemealParticles { amount } => (2005, *amount),
+            WorldEvent::DragonBreath => (2006, 0),
+            WorldEvent::InstantSplashPotion { color } => (2007, *color),
+            WorldEvent::EnderDragonDestroysBlock => (2008, 0),
+            WorldEvent::WetSpongeVaporizesInNether => (2009, 0),
+            WorldEvent::EndGatewaySpawn => (3000, 0),
+            WorldEvent::EnderDragonGrowl => (3001, 0),
+            WorldEvent::ElectricSpark => (3002, 0),
+            WorldEvent::CopperApplyWax => (3003, 0),
+            WorldEvent::CopperRemoveWax => (3004, 0),
+            WorldEvent::CopperScrapeOxidation => (3005, 0),
+        }
+    }
+}
+
+#[derive(ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x21, state = Play, bound = Client)]
+pub struct WorldEventPS2C {
+    pub event: WorldEvent,
+    pub location: Vector3D<i32>,
+    pub disable_relative_volume: bool,
+}
+
+impl ProtocolSize for WorldEventPS2C {
+    const SIZE: Range<u32> = add_protocol_sizes_ty!(i32, i32, Vector3D<i32>, bool);
+}
+
+impl ProtocolWritable for WorldEventPS2C {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        let (event, event_data) = self.event.get_id_value();
+        event.write(writer)?;
+        BlockPosition::write_variant(&self.location, writer)?;
+        event_data.write(writer)?;
+        self.disable_relative_volume.write(writer)
+    }
+}
+
+impl<'a> ProtocolReadable<'a> for WorldEventPS2C {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let event_id = i32::read(cursor)?;
+        let location = BlockPosition::read_variant(cursor)?;
+        let event_data = i32::read(cursor)?;
+        let disable_relative_volume = bool::read(cursor)?;
+        Ok(Self {
+            event: WorldEvent::new(event_id, event_data)
+                .ok_or_else(|| ProtocolError::Any(anyhow::Error::msg("Bad world event id")))?,
+            location,
+            disable_relative_volume,
+        })
+    }
+}
+
+#[repr(u8)]
+#[derive(ProtocolSize, Clone, Copy, Debug, PartialEq)]
+#[bp(variant = VarInt, ty = i32)]
+pub enum Particle<'a> {
+    AmbientEntityEffect,
+    AngryVillager,
+    Block {
+        #[bp(variant = VarInt)]
+        block_state: i32
+    },
+    BlockMarker {
+        #[bp(variant = VarInt)]
+        block_state: i32
+    },
+    Bubble,
+    Cloud,
+    Crit,
+    DamageIndicator,
+    DragonBreath,
+    DrippingLava,
+    FallingLava,
+    LandingLava,
+    DrippingWater,
+    FallingWater,
+    Dust {
+        red: f32,
+        green: f32,
+        blue: f32,
+        scale: f32,
+    },
+    DustColorTransition {
+        from_red: f32,
+        from_green: f32,
+        from_blue: f32,
+        scale: f32,
+        to_red: f32,
+        to_green: f32,
+        to_blue: f32,
+    },
+    Effect,
+    ElderGuardian,
+    EnchantedHit,
+    Enchant,
+    EndRod,
+    EntityEffect,
+    ExplosionEmitter,
+    Explosion,
+    FallingDust {
+        #[bp(variant = VarInt)]
+        block_state: i32
+    },
+    Firework,
+    Fishing,
+    Flame,
+    SoulFireFlame,
+    Soul,
+    Flash,
+    HappyVillager,
+    Composter,
+    Heart,
+    InstantEffect,
+    Item {
+        slot: Option<Slot<'a>>
+    },
+    Vibration {
+        variant: VibrationVariant<'a>,
+        ticks: i32,
+    },
+    ItemSlime,
+    ItemSnowball,
+    LargeSmoke,
+    Lava,
+    Mycelium,
+    Note,
+    Poof,
+    Portal,
+    Rain,
+    Smoke,
+    Sneeze,
+    Spit,
+    SquidInk,
+    SweepAttack,
+    TotemOfUndying,
+    Underwater,
+    Splash,
+    Witch,
+    BubblePop,
+    CurrentDown,
+    BubbleColumnUp,
+    Nautilus,
+    Dolphin,
+    CampfireCosySmoke,
+    CampfireSignalSmoke,
+    DrippingHoney,
+    FallingHoney,
+    LandingHoney,
+    FallingNectar,
+    FallingSporeBlossom,
+    Ash,
+    CrimsonSpore,
+    WarpedSpore,
+    SporeBlossomAir,
+    DrippingObsidianTear,
+    FallingObsidianTear,
+    LandingObsidianTear,
+    ReversePortal,
+    WhiteAsh,
+    SmallFlame,
+    Snowflake,
+    DrippingDripstoneLava,
+    FallingDripstoneLava,
+    DrippingDripstoneWater,
+    FallingDripstoneWater,
+    GlowSquidInk,
+    Glow,
+    WaxOn,
+    WaxOff,
+    ElectricSpark,
+    Scrape,
+}
+
+impl<'a> Particle<'a> {
+    pub fn read<C: ProtocolCursor<'a>>(id: i32, cursor: &mut C) -> ProtocolResult<Self> {
+        Ok(match id {
+            2 => Self::Block { block_state: VarInt::read_variant(cursor)? },
+            3 => Self::BlockMarker { block_state: VarInt::read_variant(cursor)? },
+            14 => Self::Dust {
+                red: f32::read(cursor)?,
+                green: f32::read(cursor)?,
+                blue: f32::read(cursor)?,
+                scale: f32::read(cursor)?.clamp(0.01, 4f32),
+            },
+            15 => Self::DustColorTransition {
+                from_red: f32::read(cursor)?,
+                from_green: f32::read(cursor)?,
+                from_blue: f32::read(cursor)?,
+                scale: f32::read(cursor)?.clamp(0.01, 4f32),
+                to_red: f32::read(cursor)?,
+                to_green: f32::read(cursor)?,
+                to_blue: f32::read(cursor)?,
+            },
+            35 => Self::Item { slot: Option::read(cursor)? },
+            36 => Self::Vibration {
+                variant: match <&'a str>::read(cursor)? {
+                    "minecraft:block" => VibrationVariant::Block { position: BlockPosition::read_variant(cursor)? },
+                    "minecraft:entity" => VibrationVariant::Entity {
+                        entity_id: VarInt::read_variant(cursor)?,
+                        entity_eye_height: f32::read(cursor)?,
+                    },
+                    other => VibrationVariant::Other { source_type: other },
+                },
+                ticks: i32::read(cursor)?,
+            },
+            0..=87 => unsafe {
+                std::mem::transmute({
+                    let mut arr = MaybeUninit::<[u8; std::mem::size_of::<Self>()]>::uninit().assume_init();
+                    arr[0] = id as u8;
+                    arr
+                })
+            },
+            _ => Err(ProtocolError::Any(anyhow::Error::msg("Bad particle id")))?,
+        })
+    }
+
+    pub const fn get_id(&self) -> i32 {
+        (unsafe { (&*(self as *const Self as *const () as *const [u8; std::mem::size_of::<Self>()]))[0] }) as i32
+    }
+
+    pub fn write_data<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        match self {
+            Self::Block { block_state } => VarInt::write_variant(block_state, writer),
+            Self::BlockMarker { block_state } => VarInt::write_variant(block_state, writer),
+            Self::Dust { red, green, blue, scale, } => {
+                red.write(writer)?;
+                green.write(writer)?;
+                blue.write(writer)?;
+                scale.write(writer)
+            }
+            Self::DustColorTransition {
+                from_red, from_green, from_blue, scale,
+                to_red, to_green, to_blue,
+            } => {
+                from_red.write(writer)?;
+                from_green.write(writer)?;
+                from_blue.write(writer)?;
+                scale.write(writer)?;
+                to_red.write(writer)?;
+                to_green.write(writer)?;
+                to_blue.write(writer)
+            },
+            Self::Item { slot } => slot.write(writer),
+            Self::Vibration { variant, ticks } => {
+                match variant {
+                    VibrationVariant::Block { position } => {
+                        "minecraft:block".write(writer)?;
+                        BlockPosition::write_variant(position, writer)?
+                    },
+                    VibrationVariant::Entity { entity_id, entity_eye_height } => {
+                        "minecraft:entity".write(writer)?;
+                        VarInt::write_variant(entity_id, writer)?;
+                        entity_eye_height.write(writer)?
+                    }
+                    VibrationVariant::Other { source_type } => source_type.write(writer)?,
+                };
+                ticks.write(writer)
+            },
+            _ => Ok(())
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VibrationVariant<'a> {
+    Block {
+        position: Vector3D<i32>
+    },
+    Entity {
+        entity_id: i32,
+        entity_eye_height: f32,
+    },
+    Other {
+        source_type: &'a str,
+    },
+}
+
+impl<'a> ProtocolSize for VibrationVariant<'a> {
+    const SIZE: Range<u32> = add_protocol_sizes_ty!(&str).start..add_protocol_sizes_ty!(&str, Vector3D<i32>).end;
+}
+
+#[derive(ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x22, state = Play, bound = Client)]
+pub struct ParticlePS2C<'a> {
+    pub particle: Particle<'a>,
+    pub long_distance: bool,
+    pub position: Vector3D<f64>,
+    pub offset: Vector3D<f32>,
+    pub max_speed: f32,
+    pub particle_count: i32,
+}
+
+impl<'a> ProtocolSize for ParticlePS2C<'a> {
+    const SIZE: Range<u32> = add_protocol_sizes_ty!(Particle, bool, Vector3D<f64>, Vector3D<f32>, f32, i32);
+}
+
+impl<'a> ProtocolWritable for ParticlePS2C<'a> {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        VarInt::write_variant(&self.particle.get_id(), writer)?;
+        self.long_distance.write(writer)?;
+        self.position.write(writer)?;
+        self.offset.write(writer)?;
+        self.max_speed.write(writer)?;
+        self.particle_count.write(writer)?;
+        self.particle.write_data(writer)
+    }
+}
+
+impl<'a> ProtocolReadable<'a> for ParticlePS2C<'a> {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let particle_id = VarInt::read_variant(cursor)?;
+        Ok(Self {
+            long_distance: bool::read(cursor)?,
+            position: Vector3D::read(cursor)?,
+            offset: Vector3D::read(cursor)?,
+            max_speed: f32::read(cursor)?,
+            particle_count: i32::read(cursor)?,
+            particle: Particle::read(particle_id, cursor)?,
+        })
+    }
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x23, state = Play, bound = Client)]
+pub struct UpdateLightPS2C<'a> {
+    pub chunk: Vector2D<i32>,
+    pub light_data: LightData<'a>,
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+#[bp(ty = i8)]
+pub enum PreviousLoginGameMode {
+    #[bp(value = -1)]
+    None,
+    Survival,
+    Creative,
+    Adventure,
+    Spectator,
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+#[bp(ty = u8)]
+pub enum LoginGameMode {
+    Survival,
+    Creative,
+    Adventure,
+    Spectator
+}
+
+#[derive(ProtocolAll, Clone, Debug)]
+pub struct LoginDeathLocation<'a> {
+    pub dimension_name: Identifier<'a>,
+    #[bp(variant = BlockPosition)]
+    pub location: Vector3D<i32>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x24, state = Play, bound = Client)]
+pub struct LoginPS2C<'a> {
+    pub entity_id: i32,
+    pub is_hardcore: bool,
+    pub game_mode: LoginGameMode,
+    pub previous_game_mode: PreviousLoginGameMode,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, Identifier<'a>, Identifier<'a>>")]
+    pub dimensions: Cow<'a, [Identifier<'a>]>,
+    #[bp(variant = NbtBytes)]
+    pub registry_codec: &'a [u8],
+    pub dimension_type: Identifier<'a>,
+    pub dimension_name: Identifier<'a>,
+    pub hashed_seed: i64,
+    #[bp(variant = VarInt)]
+    pub max_players: i32,
+    #[bp(variant = VarInt)]
+    pub view_distance: i32,
+    #[bp(variant = VarInt)]
+    pub simulation_distance: i32,
+    pub reduced_debug_info: bool,
+    pub enable_respawn_screen: bool,
+    pub is_debug: bool,
+    pub is_flat: bool,
+    pub death_location: Option<LoginDeathLocation<'a>>,
 }
 
 #[cfg(test)]
@@ -2046,4 +2649,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn particle_test() {
+        let mut empty_slice = [].as_slice();
+        let mut zero_slice = [0].as_slice();
+        assert_eq!(Particle::read(83, &mut empty_slice).unwrap(), Particle::Glow);
+        assert_eq!(Particle::read(37, &mut empty_slice).unwrap(), Particle::ItemSlime);
+        assert_eq!(Particle::read(2, &mut zero_slice).unwrap(), Particle::Block { block_state: 0 });
+        assert_eq!(Particle::Glow.get_id(), 83);
+        assert_eq!(Particle::ItemSlime.get_id(), 37);
+        assert_eq!(Particle::Block { block_state: 2 }.get_id(), 2);
+    }
 }

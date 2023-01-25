@@ -53,6 +53,7 @@ dependencies = [
  "bird-chat",
  "bird-protocol-macro",
  "bird-util",
+ "cesu8",
  "euclid",
  "fastnbt",
  "serde",

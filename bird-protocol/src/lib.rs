@@ -5,6 +5,8 @@ use std::{ops::Range, marker::PhantomData};
 mod impls;
 mod std_impls;
 mod pub_impls;
+#[cfg(feature = "birdnbt")]
+pub mod nbt;
 
 pub use pub_impls::*;
 
