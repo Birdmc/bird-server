@@ -9,7 +9,7 @@ use uuid::Uuid;
 use bird_chat::component::Component;
 use bird_chat::identifier::Identifier;
 use bird_protocol::{*, ProtocolPacketState::*, ProtocolPacketBound::*};
-use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolReadable, ProtocolSize, ProtocolWritable};
+use bird_protocol::derive::{BirdNBT, ProtocolAll, ProtocolPacket, ProtocolReadable, ProtocolSize, ProtocolWritable};
 use bird_util::*;
 use crate::nbt::{NbtElement, read_compound_enter, read_named_nbt_tag, write_compound_enter, write_nbt_string};
 
@@ -2513,6 +2513,13 @@ pub struct LoginPS2C<'a> {
     pub is_debug: bool,
     pub is_flat: bool,
     pub death_location: Option<LoginDeathLocation<'a>>,
+}
+
+#[derive(BirdNBT, Clone, Debug)]
+pub struct LoginRegistryCodec {
+    a: i8,
+    b: i16,
+    c: i64,
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ path = "../bird-data"
 
 [dependencies.bird-protocol]
 path = "../bird-protocol"
-features = ["derive", "euclid", "fastnbt"]
+features = ["derive", "euclid", "fastnbt", "birdnbt"]
 
 [dependencies.fastnbt]
 version = "2.3.2"

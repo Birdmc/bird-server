@@ -718,7 +718,7 @@ mod fastnbt_impls {
     }
 }
 
-mod nbt {
+pub(crate) mod nbt {
     use super::*;
 
     pub struct ProtocolSkipCursor<'a, C: ProtocolCursor<'a>> {
@@ -780,6 +780,10 @@ mod nbt {
             return Err(ProtocolError::Any(anyhow::Error::msg("Nbt does not start with compound")));
         }
         skip_string(cursor)?;
+        skip_entered_compound(cursor)
+    }
+
+    pub fn skip_entered_compound<'a, C: ProtocolCursor<'a>>(cursor: &mut ProtocolSkipCursor<'a, C>) -> ProtocolResult<()> {
         loop {
             let tag = u8::read(cursor)?;
             if tag == 0 { break; }
