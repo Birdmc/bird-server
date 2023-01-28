@@ -1,305 +1,389 @@
 use std::borrow::Cow;
+use std::marker::PhantomData;
 use std::ops::Range;
-use crate::{LengthProvidedArray, LengthProvidedBytesArray, ProtocolCursor, ProtocolError, ProtocolReadable, ProtocolResult, ProtocolSize, ProtocolVariantReadable, ProtocolVariantWritable, ProtocolWritable, ProtocolWriter};
-use crate::__private::nbt::skip_entered_compound;
-use crate::impls::nbt::ProtocolSkipCursor;
+use crate::{ProtocolCursor, ProtocolError, ProtocolResult, ProtocolWriter};
 
 #[derive(Debug)]
-pub enum BorrowedNbtArray<'a, T> {
+pub enum NbtBorrowedArray<'a, T, const SIZE: usize = 0> {
     Raw(&'a [u8]),
     Native(&'a [T]),
 }
 
-pub type BorrowedI16NbtArray<'a> = BorrowedNbtArray<'a, i16>;
-pub type BorrowedI32NbtArray<'a> = BorrowedNbtArray<'a, i32>;
-pub type BorrowedI64NbtArray<'a> = BorrowedNbtArray<'a, i64>;
-pub type BorrowedF32NbtArray<'a> = BorrowedNbtArray<'a, f32>;
-pub type BorrowedF64NbtArray<'a> = BorrowedNbtArray<'a, f64>;
+pub type NbtBorrowedI16Array<'a> = NbtBorrowedArray<'a, i16, 2>;
+pub type NbtBorrowedU16Array<'a> = NbtBorrowedArray<'a, u16, 2>;
+pub type NbtBorrowedI32Array<'a> = NbtBorrowedArray<'a, i32, 4>;
+pub type NbtBorrowedU32Array<'a> = NbtBorrowedArray<'a, u32, 4>;
+pub type NbtBorrowedI64Array<'a> = NbtBorrowedArray<'a, i64, 8>;
+pub type NbtBorrowedU64Array<'a> = NbtBorrowedArray<'a, u64, 8>;
+pub type NbtBorrowedF32Array<'a> = NbtBorrowedArray<'a, f32, 4>;
+pub type NbtBorrowedF64Array<'a> = NbtBorrowedArray<'a, f64, 8>;
 
-impl<'a, T> Copy for BorrowedNbtArray<'a, T> {}
+impl<'a, T, const SIZE: usize> Copy for NbtBorrowedArray<'a, T, SIZE> {}
 
-impl<'a, T> Clone for BorrowedNbtArray<'a, T> {
+impl<'a, T, const SIZE: usize> Clone for NbtBorrowedArray<'a, T, SIZE> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'a, T: ProtocolNbtTag<'a> + Clone> Iterator for BorrowedNbtArray<'a, T> {
+impl<'a, T: Clone + NbtTag<'a>, const SIZE: usize> Iterator for NbtBorrowedArray<'a, T, SIZE> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Raw(raw) => T::read_nbt(raw).ok(),
             Self::Native(native) => {
-                let res = native.get(0)?.clone();
-                *native = &native[1..];
-                Some(res)
+                let (first, rem) = native.split_first()?;
+                *native = rem;
+                Some(first.clone())
             }
         }
     }
 }
 
-impl<'a, T: ProtocolNbtTag<'a> + Clone> BorrowedNbtArray<'a, T> {
-    pub fn len(&self) -> anyhow::Result<usize> {
+impl<'a, T: NbtTag<'a>, const SIZE: usize> NbtBorrowedArray<'a, T, SIZE> {
+
+    fn len(&self) -> ProtocolResult<usize> {
         match self {
-            Self::Raw(raw) => {
-                let mut counter = 0;
-                let mut raw_new_cursor = raw.take_cursor();
-                loop {
-                    match T::read_nbt(&mut raw_new_cursor) {
-                        Ok(_) => counter += 1,
-                        Err(ProtocolError::End) => { break; },
-                        Err(err) => Err(err)?,
+            Self::Raw(raw) => match SIZE {
+                0 => {
+                    let mut cursor = raw.take_cursor();
+                    let mut result = 0;
+                    while !cursor.is_empty() {
+                        T::read_nbt(&mut cursor)?;
+                        result += 1;
                     }
+                    Ok(result)
+                },
+                size => {
+                    debug_assert!(raw.len() % size == 0);
+                    Ok(raw.len() / size)
                 }
-                Ok(counter)
             },
             Self::Native(native) => Ok(native.len())
         }
     }
 
-    pub fn write_order_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+    fn write_nbt_values<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
         match self {
             Self::Raw(raw) => writer.write_bytes(raw),
-            Self::Native(native) => for to_write in *native { to_write.write_nbt(writer)? }
+            Self::Native(native) => for to_write in *native { to_write.write_nbt(writer)? },
         }
         Ok(())
+    }
+    
+    fn read_nbt_values<C: ProtocolCursor<'a>>(cursor: &mut C, len: usize) -> ProtocolResult<Self> {
+        match SIZE {
+            0 => {
+                let mut skip_cursor = cursor.take_cursor();
+                let raw_len = T::skip_nbt(&mut skip_cursor, len)?;
+                Ok(Self::Raw(cursor.take_bytes(raw_len)?))
+            },
+            size => Ok(Self::Raw(cursor.take_bytes(size * len)?))
+        }
+    }
+
+    fn skip_nbt_values<C: ProtocolCursor<'a>>(cursor: &mut C, len: usize) -> ProtocolResult<usize> {
+        T::skip_nbt(cursor, len)
     }
 
 }
 
-pub trait ProtocolNbtTag<'a>: 'a + Sized {
+pub const NBT_TAG_END: u8 = 0;
+pub const NBT_TAG_BYTE: u8 = 1;
+pub const NBT_TAG_SHORT: u8 = 2;
+pub const NBT_TAG_INT: u8 = 3;
+pub const NBT_TAG_LONG: u8 = 4;
+pub const NBT_TAG_FLOAT: u8 = 5;
+pub const NBT_TAG_DOUBLE: u8 = 6;
+pub const NBT_TAG_BYTE_ARRAY: u8 = 7;
+pub const NBT_TAG_STRING: u8 = 8;
+pub const NBT_TAG_LIST: u8 = 9;
+pub const NBT_TAG_COMPOUND: u8 = 10;
+pub const NBT_TAG_INT_ARRAY: u8 = 11;
+pub const NBT_TAG_LONG_ARRAY: u8 = 12;
+
+pub trait NbtTagVariant<'a, T> {
+    fn get_tag(value: &T) -> anyhow::Result<u8>;
+
+    fn write_nbt_variant<W: ProtocolWriter>(value: &T, writer: &mut W) -> anyhow::Result<()>;
+
+    fn check_tag(tag: u8) -> bool;
+
+    fn read_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<T>;
+
+    fn skip_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize>;
+}
+
+pub trait NbtTag<'a>: Sized {
     const NBT_TAG: u8;
-    const NBT_SIZE: Range<u32>;
-
-    fn default_nbt() -> Option<Self> {
-        None
-    }
-
-    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize>;
 
     fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()>;
 
     fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self>;
+
+    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize>;
 }
 
-
-macro_rules! from_default_protocol {
-    ($ty: ty, $tag: expr) => {
-        impl<'a> ProtocolNbtTag<'a> for $ty {
-            const NBT_TAG: u8 = $tag;
-            const NBT_SIZE: Range<u32> = {
-                assert!(<Self as $crate::ProtocolSize>::SIZE.start == <Self as $crate::ProtocolSize>::SIZE.end);
-                <Self as $crate::ProtocolSize>::SIZE
-            };
-
-            fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
-                let bytes = cursor.take_bytes(Self::NBT_SIZE.start as usize * amount)?;
-                Ok(bytes.len())
-            }
-
-            fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
-                self.write(writer)
-            }
-
-            fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
-                Self::read(cursor)
-            }
-        }
-    }
-}
-
-from_default_protocol!(u8, 1);
-from_default_protocol!(i8, 1);
-from_default_protocol!(i16, 2);
-from_default_protocol!(i32, 3);
-from_default_protocol!(i64, 4);
-from_default_protocol!(f32, 5);
-from_default_protocol!(f64, 6);
-
-impl<'a> ProtocolNbtTag<'a> for &'a [u8] {
-    const NBT_TAG: u8 = 7;
-    const NBT_SIZE: Range<u32> = (4..4+(i32::MAX as u32));
-
-    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
-        let mut result = 0;
-        for _ in 0..amount {
-            let len = i32::read(cursor)? as usize;
-            result += len;
-            cursor.take_bytes(len)?;
-        }
-        Ok(result)
+impl<'a, T: NbtTag<'a>> NbtTagVariant<'a, T> for T {
+    fn get_tag(_: &T) -> anyhow::Result<u8> {
+        Ok(Self::NBT_TAG)
     }
 
-    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
-        LengthProvidedBytesArray::<i32, i32>::write_variant(self, writer)
+    fn write_nbt_variant<W: ProtocolWriter>(value: &T, writer: &mut W) -> anyhow::Result<()> {
+        value.write_nbt(writer)
     }
 
-    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
-        LengthProvidedBytesArray::<i32, i32>::read_variant(cursor)
-    }
-}
-
-impl<'a> ProtocolNbtTag<'a> for Cow<'a, str> {
-    const NBT_TAG: u8 = 8;
-    const NBT_SIZE: Range<u32> = (2..2+(u16::MAX as u32));
-
-    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
-        let mut result = 0;
-        for _ in 0..amount {
-            let len = u16::read(cursor)? as usize;
-            result += len;
-            cursor.take_bytes(len)?;
-        }
-        Ok(result)
+    fn check_tag(tag: u8) -> bool {
+        tag == Self::NBT_TAG
     }
 
-    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
-        if self.len() > u16::MAX as usize { Err(anyhow::Error::msg("Too big string"))? }
-        (self.len() as u16).write(writer)?;
-        match cesu8::to_java_cesu8(self) {
-            Cow::Owned(owned) => writer.write_bytes(&owned),
-            Cow::Borrowed(borrowed) => writer.write_bytes(borrowed)
-        };
-        Ok(())
+    fn read_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<T> {
+        T::read_nbt(cursor)
     }
 
-    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
-        let len = u16::read(cursor)? as usize;
-        cesu8::from_java_cesu8(cursor.take_bytes(len)?).map_err(|err| ProtocolError::Any(err.into()))
-    }
-}
-
-#[derive(Debug)]
-pub struct NbtList<'a, T>(pub BorrowedNbtArray<'a, T>);
-
-impl<'a, T> Copy for NbtList<'a, T> {}
-
-impl<'a, T> Clone for NbtList<'a, T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<'a, T: ProtocolNbtTag<'a> + Clone> ProtocolNbtTag<'a> for NbtList<'a, T> {
-    const NBT_TAG: u8 = 9;
-    const NBT_SIZE: Range<u32> = (5..u32::MAX);
-
-    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
-        let mut result = 0;
-        for _ in 0..amount {
-            let tag = u8::read(cursor)?;
-            let len = i32::read(cursor)?;
-            result += 5;
-            if len <= 0 { break; }
-            if tag == T::NBT_TAG { return Err(ProtocolError::Any(anyhow::Error::msg("Bad nbt tag"))) }
-            result += T::skip_nbt(cursor, len as usize)?;
-        }
-        Ok(result)
-    }
-
-    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
-        T::NBT_TAG.write(writer)?;
-        (self.0.len()? as i32).write(writer)?;
-        match self.0 {
-            BorrowedNbtArray::Raw(raw) => writer.write_bytes(raw),
-            BorrowedNbtArray::Native(native) => for to_write in native { to_write.write_nbt(writer)?; }
-        };
-        Ok(())
-    }
-
-    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
-        let tag = u8::read(cursor)?;
-        let len = i32::read(cursor)?;
-        if len <= 0 { return Ok(Self(BorrowedNbtArray::Native(&[]))) };
-        if tag != T::NBT_TAG { return Err(ProtocolError::Any(anyhow::Error::msg("Bad nbt tag"))) };
-        let mut pcursor = cursor.take_cursor();
-        let bytes_len = T::skip_nbt(&mut pcursor, len as usize)?;
-        Ok(Self(BorrowedNbtArray::Raw(cursor.take_bytes(bytes_len)?)))
-    }
-}
-
-macro_rules! borrowed_nbt_array {
-    ($ty: ident, $tag: expr, $size_one: expr) => {
-        impl<'a> ProtocolNbtTag<'a> for $ty<'a> {
-            const NBT_TAG: u8 = $tag;
-            const NBT_SIZE: Range<u32> = (4..u32::MAX);
-
-            fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
-                let mut result = 0;
-                for _ in 0..amount {
-                    let len = i32::read(cursor)? as usize;
-                    let bytes = cursor.take_bytes(len * $size_one)?;
-                    result += $size_one + bytes.len();
-                }
-                Ok(result)
-            }
-
-            fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
-                match self {
-                    Self::Raw(raw) => (raw.len() / $size_one) as i32,
-                    Self::Native(native) => native.len() as i32,
-                }.write(writer)?;
-                self.write_order_nbt(writer)
-            }
-
-            fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
-                let len = i32::read(cursor)? as usize;
-                Ok(Self::Raw(cursor.take_bytes(len * $size_one)?))
-            }
-        }
-    }
-}
-
-borrowed_nbt_array!(BorrowedI32NbtArray, 11, 4);
-borrowed_nbt_array!(BorrowedI64NbtArray, 12, 8);
-
-impl<'a, T: ProtocolNbtTag<'a>> ProtocolNbtTag<'a> for Option<T> {
-    const NBT_TAG: u8 = T::NBT_TAG;
-    const NBT_SIZE: Range<u32> = T::NBT_SIZE;
-
-    fn default_nbt() -> Option<Self> {
-        Some(None)
-    }
-
-    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+    fn skip_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
         T::skip_nbt(cursor, amount)
     }
+}
+
+macro_rules! inherit_from_default_protocol {
+    ($($ty: ty = $tag: expr$(,)*)*) => {
+        $(
+        impl<'a> $crate::nbt::NbtTag<'a> for $ty {
+            const NBT_TAG: u8 = $tag;
+
+            fn write_nbt<W: $crate::ProtocolWriter>(&self, writer: &mut W) -> $crate::anyhow::Result<()> {
+                <Self as $crate::ProtocolWritable>::write(self, writer)
+            }
+
+            fn read_nbt<C: $crate::ProtocolCursor<'a>>(cursor: &mut C) -> $crate::ProtocolResult<Self> {
+                <Self as $crate::ProtocolReadable<'a>>::read(cursor)
+            }
+
+            fn skip_nbt<C: $crate::ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> $crate::ProtocolResult<usize> {
+                let to_skip = (<Self as $crate::ProtocolSize>::SIZE.start as usize) * amount;
+                cursor.take_bytes(to_skip)?;
+                Ok(to_skip)
+            }
+        }
+        )*
+    }
+}
+
+inherit_from_default_protocol!(
+    bool = NBT_TAG_BYTE,
+    i8 = NBT_TAG_BYTE,
+    u8 = NBT_TAG_BYTE,
+    i16 = NBT_TAG_SHORT,
+    u16 = NBT_TAG_SHORT,
+    i32 = NBT_TAG_INT,
+    u32 = NBT_TAG_INT,
+    i64 = NBT_TAG_LONG,
+    u64 = NBT_TAG_LONG,
+    f32 = NBT_TAG_FLOAT,
+    f64 = NBT_TAG_DOUBLE,
+);
+
+pub fn write_nbt_str<W: ProtocolWriter>(str: &str, writer: &mut W) -> anyhow::Result<()> {
+    (str.len() as u16).write_nbt(writer)?;
+    match cesu8::to_java_cesu8(str) {
+        Cow::Owned(owned) => writer.write_bytes(&owned),
+        Cow::Borrowed(borrowed) => writer.write_bytes(borrowed),
+    }
+    Ok(())
+}
+
+impl<'a> NbtTag<'a> for Cow<'a, str> {
+    const NBT_TAG: u8 = NBT_TAG_STRING;
 
     fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
-        match self {
-            Some(val) => T::write_nbt(val, writer),
-            None => Ok(())
-        }
+        write_nbt_str(&self, writer)
     }
 
     fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
-        T::read_nbt(cursor).map(|val| Some(val))
+        let len = u16::read_nbt(cursor)? as usize;
+        cesu8::from_java_cesu8(cursor.take_bytes(len)?).map_err(|err| ProtocolError::Any(err.into()))
+    }
+
+    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        let mut result = 0;
+        for _ in 0..amount {
+            let len = u16::read_nbt(cursor)? as _;
+            cursor.take_bytes(len)?;
+            result += len + 2;
+        }
+        Ok(result)
     }
 }
 
-pub const COMPOUND_TAG: u8 = 10;
+impl<'a> NbtTag<'a> for String {
+    const NBT_TAG: u8 = NBT_TAG_STRING;
 
-pub fn enter_compound<'a, C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<()> {
-    let tag = u8::read_nbt(cursor)?;
-    if tag != COMPOUND_TAG { Err(ProtocolError::Any(anyhow::Error::msg("Expected compound")))? }
-    let _ = <Cow<'a, str>>::read_nbt(cursor)?;
-    Ok(())
+    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        write_nbt_str(self.as_str(), writer)
+    }
+
+    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        Cow::read_nbt(cursor).map(|str: Cow<str>| str.into_owned())
+    }
+
+    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        Cow::<str>::skip_nbt(cursor, amount)
+    }
 }
 
-pub fn skip_compound<'a, C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<usize> {
-    let mut skip_cursor = ProtocolSkipCursor::new(cursor.take_cursor());
-    skip_entered_compound(&mut skip_cursor)?;
-    cursor.take_bytes(skip_cursor.length)?;
-    Ok(skip_cursor.length)
-}
+impl<'a> NbtTag<'a> for &'a [u8] {
+    const NBT_TAG: u8 = NBT_TAG_LIST;
 
-pub fn read_compound<'a, C: ProtocolCursor<'a>>(cursor: &mut C, mut func: impl FnMut(u8, &str, &mut C) -> ProtocolResult<()>) -> ProtocolResult<()> {
-    loop {
+    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        NBT_TAG_BYTE.write_nbt(writer)?;
+        (self.len() as i32).write_nbt(writer)?;
+        writer.write_bytes(self);
+        Ok(())
+    }
+
+    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
         let tag = u8::read_nbt(cursor)?;
-        if tag == 0 { break; }
-        let name = <Cow<'a, str>>::read_nbt(cursor)?;
-        func(tag, &name, cursor)?;
+        let len = i32::read_nbt(cursor)?;
+        if len <= 0 { return Ok(&[]) }
+        if tag != NBT_TAG_BYTE { return Err(ProtocolError::Any(anyhow::Error::msg("Bad nbt tag"))) }
+        cursor.take_bytes(len as _)
     }
-    Ok(())
+
+    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        let mut result = 0;
+        for _ in 0..amount {
+            let tag = u8::read_nbt(cursor)?;
+            let len = i32::read_nbt(cursor)?;
+            if len <= 0 { result += 5; continue; }
+            if tag != NBT_TAG_BYTE { return Err(ProtocolError::Any(anyhow::Error::msg("Bad nbt tag"))) }
+            cursor.take_bytes(len as _)?;
+            result += 5 + len as usize;
+        }
+        Ok(result)
+    }
+}
+
+impl<'a, T: NbtTag<'a> + 'a, const SIZE: usize> NbtTag<'a> for NbtBorrowedArray<'a, T, SIZE> {
+    const NBT_TAG: u8 = NBT_TAG_LIST;
+
+    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        T::NBT_TAG.write_nbt(writer)?;
+        (self.len()? as i32).write_nbt(writer)?;
+        self.write_nbt(writer)
+    }
+
+    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let tag = u8::read_nbt(cursor)?;
+        let len = i32::read_nbt(cursor)?;
+        if len <= 0 { return Ok(NbtBorrowedArray::Native(&[])) }
+        if tag != T::NBT_TAG { return Err(ProtocolError::Any(anyhow::Error::msg("Bad nbt tag"))) }
+        Self::read_nbt_values(cursor, len as _)
+    }
+
+    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        let mut result = 0;
+        for _ in 0..amount {
+            let tag = u8::read_nbt(cursor)?;
+            let len = i32::read_nbt(cursor)?;
+            if len <= 0 { result += 5; continue; }
+            if tag != T::NBT_TAG { return Err(ProtocolError::Any(anyhow::Error::msg("Bad nbt tag"))) }
+            result += 5 + Self::skip_nbt_values(cursor, len as _)?;
+        }
+        Ok(result)
+    }
+}
+
+impl<'a, T: NbtTag<'a>> NbtTag<'a> for Vec<T> {
+    const NBT_TAG: u8 = NBT_TAG_LIST;
+
+    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        T::NBT_TAG.write_nbt(writer)?;
+        (self.len() as i32).write_nbt(writer)?;
+        for tag in self { tag.write_nbt(writer)? }
+        Ok(())
+    }
+
+    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let tag = u8::read_nbt(cursor)?;
+        let len = i32::read_nbt(cursor)?;
+        if len <= 0 { return Ok(Vec::new()) }
+        if tag != T::NBT_TAG { return Err(ProtocolError::Any(anyhow::Error::msg("Bad nbt tag"))) }
+        let mut result = Vec::new();
+        for _ in 0..len {
+            result.push(T::read_nbt(cursor)?);
+        }
+        Ok(result)
+    }
+
+    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        let mut result = 0;
+        for _ in 0..amount {
+            let tag = u8::read_nbt(cursor)?;
+            let len = i32::read_nbt(cursor)?;
+            if len <= 0 { result += 5; continue; }
+            if tag != T::NBT_TAG { return Err(ProtocolError::Any(anyhow::Error::msg("Bad nbt tag"))) }
+            result += 5 + T::skip_nbt(cursor, len as _)?;
+        }
+        Ok(result)
+    }
+}
+
+pub struct NbtByteArray;
+pub struct NbtIntArray;
+pub struct NbtLongArray;
+
+macro_rules! inherit_from_nbt_tag {
+    ($($inheritance: ident => $ty: ty = $tag: expr$(,)*)*) => {
+        $(
+        impl<'a> $crate::nbt::NbtTagVariant<'a, $inheritance<'a>> for $ty {
+            fn get_tag(_: &$inheritance<'a>) -> $crate::anyhow::Result<u8> {
+                Ok($tag)
+            }
+
+            fn write_nbt_variant<W: $crate::ProtocolWriter>(value: &$inheritance<'a>, writer: &mut W) -> $crate::anyhow::Result<()> {
+                <$inheritance::<'a> as $crate::nbt::NbtTag<'a>>::write_nbt(value, writer)
+            }
+
+            fn check_tag(tag: u8) -> bool {
+                tag == $tag
+            }
+
+            fn read_nbt_variant<C: $crate::ProtocolCursor<'a>>(cursor: &mut C) -> $crate::ProtocolResult<$inheritance<'a>> {
+                <$inheritance::<'a> as $crate::nbt::NbtTag<'a>>::read_nbt(cursor)
+            }
+
+            fn skip_nbt_variant<C: $crate::ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> $crate::ProtocolResult<usize> {
+                <$inheritance::<'a> as $crate::nbt::NbtTag<'a>>::skip_nbt(cursor, amount)
+            }
+        }
+        )*
+    }
+}
+
+type U8Array<'a> = &'a [u8];
+
+inherit_from_nbt_tag!(
+    U8Array => NbtByteArray = NBT_TAG_BYTE_ARRAY,
+    NbtBorrowedI32Array => NbtIntArray = NBT_TAG_INT_ARRAY,
+    NbtBorrowedI64Array => NbtLongArray = NBT_TAG_LONG_ARRAY,
+);
+
+pub mod compound {
+    use super::*;
+
+    pub fn read_nbt_compound<'a, C: ProtocolCursor<'a>>(
+        cursor: &mut C,
+        mut fun: impl FnMut(u8, Cow<'a, str>, &mut C) -> ProtocolResult<()>
+    ) -> ProtocolResult<()> {
+        loop {
+            let tag = u8::read_nbt(cursor)?;
+            if tag == NBT_TAG_END { break; }
+            let name = Cow::read_nbt(cursor)?;
+            fun(tag, name, cursor)?;
+        }
+        Ok(())
+    }
+
 }

@@ -3,13 +3,11 @@ mod shared;
 mod writable;
 mod size;
 mod packet;
-mod nbt;
 
 use writable::impl_derive as protocol_writable_derive_impl;
 use readable::impl_derive as protocol_readable_derive_impl;
 use size::impl_derive as protocol_size_derive_impl;
 use packet::impl_derive as protocol_packet_derive_impl;
-use nbt::impl_derive as bird_nbt_derive_impl;
 
 macro_rules! derive_impl {
     ($func: expr) => {
@@ -48,9 +46,4 @@ pub fn protocol_all_derive(item: proc_macro::TokenStream) -> proc_macro::TokenSt
     writable.extend(readable.into_iter());
     writable.extend(size.into_iter());
     writable
-}
-
-#[proc_macro_derive(BirdNBT, attributes(bnbt))]
-pub fn bird_nbt_derive(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    derive_impl!(bird_nbt_derive_impl(item))
 }

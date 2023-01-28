@@ -9,7 +9,7 @@ use uuid::Uuid;
 use bird_chat::component::Component;
 use bird_chat::identifier::Identifier;
 use bird_protocol::{*, ProtocolPacketState::*, ProtocolPacketBound::*};
-use bird_protocol::derive::{BirdNBT, ProtocolAll, ProtocolPacket, ProtocolReadable, ProtocolSize, ProtocolWritable};
+use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolReadable, ProtocolSize, ProtocolWritable};
 use bird_util::*;
 use crate::nbt::{NbtElement, read_compound_enter, read_named_nbt_tag, write_compound_enter, write_nbt_string};
 
@@ -2515,11 +2515,133 @@ pub struct LoginPS2C<'a> {
     pub death_location: Option<LoginDeathLocation<'a>>,
 }
 
-#[derive(BirdNBT, Clone, Debug)]
-pub struct LoginRegistryCodec {
-    a: i8,
-    b: i16,
-    c: i64,
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodec<'a> {
+    #[serde(rename = "minecraft:dimension_type", borrow)]
+    pub dimension_type: LoginRegistryCodecRegistry<'a, LoginRegistryCodecDimension<'a>>,
+    #[serde(rename = "minecraft:worldgen/biome", borrow)]
+    pub worldgen_biome: LoginRegistryCodecRegistry<'a, LoginRegistryCodecWorldgenBiome<'a>>,
+    #[serde(rename = "minecraft:chat_type", borrow)]
+    pub chat_type: LoginRegistryCodecRegistry<'a, LoginRegistryCodecChatType<'a>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecRegistry<'a, T: Clone> {
+    #[serde(rename = "type", borrow)]
+    pub ty: Cow<'a, str>,
+    #[serde(borrow)]
+    pub value: Cow<'a, [LoginRegistryCodecValue<'a, T>]>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecValue<'a, T: Clone> {
+    #[serde(borrow)]
+    pub name: Cow<'a, str>,
+    pub id: i32,
+    pub element: T,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecDimension<'a> {
+    pub piglin_safe: bool,
+    pub has_raids: bool,
+    pub monster_spawn_light_level: i32,
+    pub monster_spawn_block_light_limit: i32,
+    pub natural: bool,
+    pub ambient_light: f32,
+    pub fixed_time: Option<i64>,
+    #[serde(borrow)]
+    pub infiniburn: Cow<'a, str>,
+    pub respawn_anchor_works: bool,
+    pub has_skylight: bool,
+    pub bed_works: bool,
+    #[serde(borrow)]
+    pub effects: Cow<'a, str>,
+    pub min_y: i32,
+    pub height: i32,
+    pub logical_height: i32,
+    pub coordinate_scale: f64,
+    pub ultrawarm: bool,
+    pub has_ceiling: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecWorldgenBiome<'a> {
+    #[serde(borrow)]
+    pub precipitation: Cow<'a, str>,
+    pub depth: Option<f32>,
+    pub temperature: f32,
+    pub scale: Option<f32>,
+    pub downfall: f32,
+    #[serde(borrow)]
+    pub category: Option<Cow<'a, str>>,
+    #[serde(borrow)]
+    pub temperature_modifier: Option<Cow<'a, str>>,
+    pub sky_color: i32,
+    pub water_fog_color: i32,
+    pub fog_color: i32,
+    pub water_color: i32,
+    pub foliage_color: Option<i32>,
+    pub grass_color: Option<i32>,
+    #[serde(borrow)]
+    pub grass_color_modifier: Option<Cow<'a, str>>,
+    #[serde(borrow)]
+    pub music: Option<LoginRegistryCodecWorldgenBiomeMusic<'a>>,
+    #[serde(borrow)]
+    pub ambient_sound: Cow<'a, str>,
+    #[serde(borrow)]
+    pub additions_sound: Option<LoginRegistryCodecWorldgenBiomeAdditionsSound<'a>>,
+    #[serde(borrow)]
+    pub mood_sound: Option<LoginRegistryCodecWorldgenBiomeMoodSound<'a>>,
+    #[serde(borrow)]
+    pub particle: Option<LoginRegistryCodecWorldgenBiomeParticle<'a>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecWorldgenBiomeMusic<'a> {
+    pub replace_current_music: bool,
+    #[serde(borrow)]
+    pub sound: Cow<'a, str>,
+    pub max_delay: i32,
+    pub min_delay: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecWorldgenBiomeAdditionsSound<'a> {
+    #[serde(borrow)]
+    pub sound: Cow<'a, str>,
+    pub tick_chance: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecWorldgenBiomeMoodSound<'a> {
+    pub sound: Cow<'a, str>,
+    pub tick_delay: i32,
+    pub offset: f64,
+    pub block_search_extent: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecWorldgenBiomeParticle<'a> {
+    pub probability: f32,
+    #[serde(borrow)]
+    pub ty: LoginRegistryCodecWorldgenBiomeParticleType<'a>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecWorldgenBiomeParticleType<'a> {
+    #[serde(rename = "type", borrow)]
+    pub ty: Cow<'a, str>
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LoginRegistryCodecChatType<'a> {
+    #[serde(borrow)]
+    pub translation_key: Cow<'a, str>,
+    #[serde(borrow)]
+    pub style: Component<'a>,
+    #[serde(borrow)]
+    pub parameters: Cow<'a, [Cow<'a, str>]>,
 }
 
 #[cfg(test)]
