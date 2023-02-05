@@ -92,6 +92,8 @@ pub struct ProtocolCursorIterator<'a, 'b, C, L, V, VV> {
     _marker: PhantomData<&'b (V, VV)>,
 }
 
+pub struct ProtocolSizeOption<T, const SIZE: usize>(PhantomData<T>);
+
 pub trait ProtocolLength {
     fn into_usize(self) -> usize;
 

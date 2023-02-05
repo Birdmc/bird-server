@@ -1062,3 +1062,25 @@ impl<'a, 'b, C: ProtocolCursor<'b>, L: ProtocolCursorIteratorLimiter, V, VV: Pro
         }
     }
 }
+
+impl<T: ProtocolSize, const S: usize> ProtocolSize for ProtocolSizeOption<T, S> {
+    const SIZE: Range<u32> = min_u32(T::SIZE.start, S as _)..max_u32(T::SIZE.end, S as _);
+}
+
+impl<'a, T: ProtocolReadable<'a>, const S: usize> ProtocolVariantReadable<'a, Option<T>> for ProtocolSizeOption<T, S> {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Option<T>> {
+        match cursor.remaining_bytes() == S {
+            true => Ok(None),
+            false => T::read(cursor).map(|val| Some(val))
+        }
+    }
+}
+
+impl<T: ProtocolWritable, const S: usize> ProtocolVariantWritable<Option<T>> for ProtocolSizeOption<T, S> {
+    fn write_variant<W: ProtocolWriter>(object: &Option<T>, writer: &mut W) -> anyhow::Result<()> {
+        match object {
+            Some(val) => val.write(writer),
+            None => Ok(writer.write_fixed_bytes([0; S]))
+        }
+    }
+}

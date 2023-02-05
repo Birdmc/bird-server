@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
-use std::ops::{Range, Shl};
+use std::ops::Range;
 use bitfield_struct::bitfield;
 use euclid::default::{Vector2D, Vector3D};
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,8 @@ use uuid::Uuid;
 use bird_chat::component::Component;
 use bird_chat::identifier::Identifier;
 use bird_protocol::{*, ProtocolPacketState::*, ProtocolPacketBound::*};
-use bird_protocol::derive::{ProtocolAll, ProtocolPacket, ProtocolReadable, ProtocolSize, ProtocolWritable};
+use bird_protocol::derive::{BirdNbt, ProtocolAll, ProtocolPacket, ProtocolSize, ProtocolWritable};
+use bird_protocol::nbt::{NBT_TAG_STRING, NbtTag, NbtByteArray, write_nbt_str};
 use bird_util::*;
 use crate::nbt::{NbtElement, read_compound_enter, read_named_nbt_tag, write_compound_enter, write_nbt_string};
 
@@ -1750,7 +1751,7 @@ impl OwnedBitSet {
         if word_index >= self.words.len() {
             self.words.resize(word_index + 1, 0);
         }
-        self.words[word_index] |= (1u64.overflowing_shl(index as u32).0);
+        self.words[word_index] |= 1u64.overflowing_shl(index as u32).0
     }
 
     pub fn clear(&mut self, index: usize) {
@@ -2339,7 +2340,8 @@ impl<'a> Particle<'a> {
             },
             0..=87 => unsafe {
                 std::mem::transmute({
-                    let mut arr = MaybeUninit::<[u8; std::mem::size_of::<Self>()]>::uninit().assume_init();
+                    #[allow(invalid_value)]
+                        let mut arr = MaybeUninit::<[u8; std::mem::size_of::<Self>()]>::uninit().assume_init();
                     arr[0] = id as u8;
                     arr
                 })
@@ -2373,14 +2375,14 @@ impl<'a> Particle<'a> {
                 to_red.write(writer)?;
                 to_green.write(writer)?;
                 to_blue.write(writer)
-            },
+            }
             Self::Item { slot } => slot.write(writer),
             Self::Vibration { variant, ticks } => {
                 match variant {
                     VibrationVariant::Block { position } => {
                         "minecraft:block".write(writer)?;
                         BlockPosition::write_variant(position, writer)?
-                    },
+                    }
                     VibrationVariant::Entity { entity_id, entity_eye_height } => {
                         "minecraft:entity".write(writer)?;
                         VarInt::write_variant(entity_id, writer)?;
@@ -2389,7 +2391,7 @@ impl<'a> Particle<'a> {
                     VibrationVariant::Other { source_type } => source_type.write(writer)?,
                 };
                 ticks.write(writer)
-            },
+            }
             _ => Ok(())
         }
     }
@@ -2464,7 +2466,7 @@ pub struct UpdateLightPS2C<'a> {
 #[derive(ProtocolAll, Clone, Copy, Debug)]
 #[bp(ty = i8)]
 pub enum PreviousLoginGameMode {
-    #[bp(value = -1)]
+    #[bp(value = - 1)]
     None,
     Survival,
     Creative,
@@ -2478,7 +2480,7 @@ pub enum LoginGameMode {
     Survival,
     Creative,
     Adventure,
-    Spectator
+    Spectator,
 }
 
 #[derive(ProtocolAll, Clone, Debug)]
@@ -2631,7 +2633,7 @@ pub struct LoginRegistryCodecWorldgenBiomeParticle<'a> {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LoginRegistryCodecWorldgenBiomeParticleType<'a> {
     #[serde(rename = "type", borrow)]
-    pub ty: Cow<'a, str>
+    pub ty: Cow<'a, str>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -2642,6 +2644,343 @@ pub struct LoginRegistryCodecChatType<'a> {
     pub style: Component<'a>,
     #[serde(borrow)]
     pub parameters: Cow<'a, [Cow<'a, str>]>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x25, state = Play, bound = Client)]
+pub struct MapDataPS2C<'a> {
+    #[bp(variant = VarInt)]
+    pub map_id: i32,
+    pub scale: i8,
+    pub locked: bool,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, MapDataIcon<'a>, MapDataIcon<'a>>")]
+    pub icons: Cow<'a, [MapDataIcon<'a>]>,
+    #[bp(variant = "ProtocolSizeOption<MapDataColRows<'a>, 1>")]
+    pub col_rows: Option<MapDataColRows<'a>>,
+}
+
+#[derive(ProtocolAll, Clone, Debug)]
+pub struct MapDataColRows<'a> {
+    pub columns: u8,
+    pub rows: u8,
+    pub x: i8,
+    pub z: i8,
+    #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+    pub data: &'a [u8],
+}
+
+#[derive(BirdNbt, Clone, Debug)]
+pub struct MapDataColRowsDataRoot<'a> {
+    pub data: MapDataColRowsData<'a>,
+    #[bnbt(name = "DataVersion")]
+    pub data_version: Option<i32>,
+}
+
+#[derive(BirdNbt, Clone, Debug)]
+pub struct MapDataColRowsData<'a> {
+    pub scale: i8,
+    pub dimension: Cow<'a, str>,
+    #[bnbt(name = "trackingPosition")]
+    pub tracking_position: bool,
+    #[bnbt(name = "unlimitedTracking")]
+    pub unlimited_tracking: bool,
+    pub locked: bool,
+    #[bnbt(name = "xCenter")]
+    pub x_center: i32,
+    #[bnbt(name = "zCenter")]
+    pub z_center: i32,
+    pub banners: MapDataColRowsBannersData<'a>,
+    pub frames: MapDataColRowsFramesData,
+    #[bnbt(variant = "NbtByteArray")]
+    pub colors: &'a [u8],
+}
+
+#[derive(Clone, Debug)]
+pub enum MapDataColRowsBannersColorData {
+    White,
+    Orange,
+    Magenta,
+    LightBlue,
+    Yellow,
+    Lime,
+    Pink,
+    Gray,
+    LightGray,
+    Cyan,
+    Purple,
+    Blue,
+    Brown,
+    Green,
+    Red,
+    Black,
+}
+
+impl<'a> NbtTag<'a> for MapDataColRowsBannersColorData {
+    const NBT_TAG: u8 = NBT_TAG_STRING;
+
+    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        write_nbt_str(match self {
+            Self::White => "white",
+            Self::Orange => "orange",
+            Self::Magenta => "magenta",
+            Self::LightBlue => "light_blue",
+            Self::Yellow => "yellow",
+            Self::Lime => "lime",
+            Self::Pink => "pink",
+            Self::Gray => "gray",
+            Self::LightGray => "light_gray",
+            Self::Cyan => "cyan",
+            Self::Purple => "purple",
+            Self::Blue => "blue",
+            Self::Brown => "brown",
+            Self::Green => "green",
+            Self::Red => "red",
+            Self::Black => "black",
+        }, writer)
+    }
+
+    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        Ok(match Cow::read_nbt(cursor)?.as_ref() {
+            "white" => Self::White,
+            "orange" => Self::Orange,
+            "magenta" => Self::Magenta,
+            "light_blue" => Self::LightBlue,
+            "yellow" => Self::Yellow,
+            "lime" => Self::Lime,
+            "pink" => Self::Pink,
+            "gray" => Self::Gray,
+            "light_gray" => Self::LightGray,
+            "cyan" => Self::Cyan,
+            "purple" => Self::Purple,
+            "blue" => Self::Blue,
+            "brown" => Self::Brown,
+            "green" => Self::Green,
+            "red" => Self::Red,
+            "black" => Self::Black,
+            _ => Err(ProtocolError::Any(anyhow::Error::msg("Bad color")))?,
+        })
+    }
+
+    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        Cow::<str>::skip_nbt(cursor, amount)
+    }
+}
+
+#[derive(BirdNbt, Clone, Debug)]
+pub struct MapDataColRowsBannersData<'a> {
+    #[bnbt(name = "Color")]
+    pub color: MapDataColRowsBannersColorData,
+    #[bnbt(name = "Name")]
+    pub name: Option<Cow<'a, str>>,
+    #[bnbt(name = "Pos")]
+    pub pos: Vector3D<i32>,
+}
+
+#[derive(BirdNbt, Clone, Debug)]
+pub struct MapDataColRowsFramesData {
+    #[bnbt(name = "EntityId")]
+    pub entity_id: i32,
+    #[bnbt(name = "Rotation")]
+    pub rotation: i32,
+    #[bnbt(name = "Pos")]
+    pub pos: Vector3D<i32>,
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+#[bp(variant = VarInt, ty = i32)]
+pub enum MapDataIconType {
+    WhiteArrow,
+    GreenArrow,
+    RedArrow,
+    BlueArrow,
+    WhiteCross,
+    RedPointer,
+    WhiteCircle,
+    SmallWhiteCircle,
+    Mansion,
+    Temple,
+    WhiteBanner,
+    OrangeBanner,
+    MagentaBanner,
+    LightBlueBanner,
+    YellowBanner,
+    LimeBanner,
+    PinkBanner,
+    GrayBanner,
+    LightGrayBanner,
+    CyanBanner,
+    PurpleBanner,
+    BlueBanner,
+    BrownBanner,
+    GreenBanner,
+    RedBanner,
+    BlackBanner,
+    TreasureMarker,
+}
+
+#[derive(ProtocolAll, Clone, Debug)]
+pub struct MapDataIcon<'a> {
+    pub ty: MapDataIconType,
+    pub x: i8,
+    pub z: i8,
+    pub direction: i8,
+    pub display_name: Option<Component<'a>>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x26, state = Play, bound = Client)]
+pub struct MerchantOffersPS2C<'a> {
+    #[bp(variant = VarInt)]
+    pub window_id: i32,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, MerchantOffersTrades<'a>, MerchantOffersTrades<'a>>")]
+    pub trades: Cow<'a, [MerchantOffersTrades<'a>]>,
+    #[bp(variant = VarInt)]
+    pub villager_level: i32,
+    #[bp(variant = VarInt)]
+    pub experience: i32,
+    pub is_regular_villager: bool,
+    pub can_restock: bool,
+}
+
+#[derive(ProtocolAll, Clone, Debug)]
+pub struct MerchantOffersTrades<'a> {
+    pub input_item1: Option<Slot<'a>>,
+    pub output_item: Option<Slot<'a>>,
+    pub input_item2: Option<Slot<'a>>,
+    pub disabled: bool,
+    pub already_used: i32,
+    pub maximum_uses: i32,
+    pub xp: i32,
+    pub special_price: i32,
+    pub price_multiplier: f32,
+    pub demand: i32,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x27, state = Play, bound = Client)]
+pub struct UpdateEntityPositionPS2C {
+    #[bp(variant = VarInt)]
+    pub entity_id: i32,
+    pub delta: Vector3D<i16>,
+    pub on_ground: bool,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x28, state = Play, bound = Client)]
+pub struct UpdateEntityPositionAndRotationPS2C {
+    #[bp(variant = VarInt)]
+    pub entity_id: i32,
+    pub delta: Vector3D<i16>,
+    #[bp(variant = Angle)]
+    pub yaw: f32,
+    #[bp(variant = Angle)]
+    pub pitch: f32,
+    pub on_ground: bool,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x29, state = Play, bound = Client)]
+pub struct UpdateEntityRotationPS2C {
+    #[bp(variant = VarInt)]
+    pub entity_id: i32,
+    #[bp(variant = Angle)]
+    pub yaw: f32,
+    #[bp(variant = Angle)]
+    pub pitch: f32,
+    pub on_ground: bool,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x2A, state = Play, bound = Client)]
+pub struct MoveVehiclePS2C {
+    pub pos: Vector3D<f64>,
+    /// Degrees
+    pub yaw: f32,
+    /// Degrees
+    pub pitch: f32,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x2B, state = Play, bound = Client)]
+pub struct OpenBookPS2C {
+    pub off_hand: bool,
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+#[bp(variant = VarInt, ty = i32)]
+pub enum InventorySizeType {
+    Inventory1,
+    Inventory2,
+    Inventory3,
+    Inventory4,
+    Inventory5,
+    Inventory6,
+    Inventory3x3,
+    Anvil,
+    Beacon,
+    BlastFurnace,
+    BrewingStand,
+    Crafting,
+    Enchantment,
+    Furnace,
+    Grindstone,
+    Hopper,
+    Lectern,
+    Loom,
+    Merchant,
+    ShulkerBox,
+    Smithing,
+    Smoker,
+    Cartography,
+    Stonecutter,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x2C, state = Play, bound = Client)]
+pub struct OpenScreenPS2C<'a> {
+    #[bp(variant = VarInt)]
+    pub window_id: i32,
+    pub window_type: InventorySizeType,
+    pub window_title: Component<'a>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x2D, state = Play, bound = Client)]
+pub struct OpenSignEditorPS2C {
+    #[bp(variant = BlockPosition)]
+    pub location: Vector3D<i32>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x2E, state = Play, bound = Client)]
+pub struct PingPS2C {
+    pub id: i32,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x2F, state = Play, bound = Client)]
+pub struct PlaceGhostRecipePS2C<'a> {
+    pub window_id: i8,
+    pub recipe: Identifier<'a>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x30, state = Play, bound = Client)]
+pub struct PlayerAbilitiesPS2C {
+    pub flags: PlayerAbilitiesFlags,
+    pub flying_speed: f32,
+    pub view_modifier: f32,
+}
+
+#[bitfield(u8)]
+#[derive(ProtocolAll)]
+pub struct PlayerAbilitiesFlags {
+    pub invulnerable: bool,
+    pub flying: bool,
+    pub allow_flying: bool,
+    pub creative_mode: bool,
+    #[bits(4)]
+    _gap: u8,
 }
 
 #[cfg(test)]

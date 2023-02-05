@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::marker::PhantomData;
-use std::ops::Range;
-use crate::{ProtocolCursor, ProtocolError, ProtocolResult, ProtocolWriter};
+use euclid::Vector3D;
+use crate::{ProtocolCursor, ProtocolError, ProtocolResult, ProtocolWriter, write_compound};
 
 #[derive(Debug)]
 pub enum NbtBorrowedArray<'a, T, const SIZE: usize = 0> {
@@ -104,11 +104,20 @@ pub const NBT_TAG_INT_ARRAY: u8 = 11;
 pub const NBT_TAG_LONG_ARRAY: u8 = 12;
 
 pub trait NbtTagVariant<'a, T> {
-    fn get_tag(value: &T) -> anyhow::Result<u8>;
+    fn default_nbt_variant_value() -> Option<T> {
+        None
+    }
+
+    #[allow(unused_variables)]
+    fn should_write_nbt_variant(value: &T) -> bool {
+        true
+    }
+
+    fn get_nbt_tag(value: &T) -> anyhow::Result<u8>;
 
     fn write_nbt_variant<W: ProtocolWriter>(value: &T, writer: &mut W) -> anyhow::Result<()>;
 
-    fn check_tag(tag: u8) -> bool;
+    fn check_nbt_tag(tag: u8) -> bool;
 
     fn read_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<T>;
 
@@ -118,6 +127,14 @@ pub trait NbtTagVariant<'a, T> {
 pub trait NbtTag<'a>: Sized {
     const NBT_TAG: u8;
 
+    fn default_nbt_value() -> Option<Self> {
+        None
+    }
+
+    fn should_write_nbt(&self) -> bool {
+        true
+    }
+
     fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()>;
 
     fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self>;
@@ -126,7 +143,15 @@ pub trait NbtTag<'a>: Sized {
 }
 
 impl<'a, T: NbtTag<'a>> NbtTagVariant<'a, T> for T {
-    fn get_tag(_: &T) -> anyhow::Result<u8> {
+    fn default_nbt_variant_value() -> Option<T> {
+        T::default_nbt_value()
+    }
+
+    fn should_write_nbt_variant(value: &T) -> bool {
+        value.should_write_nbt()
+    }
+
+    fn get_nbt_tag(_: &T) -> anyhow::Result<u8> {
         Ok(Self::NBT_TAG)
     }
 
@@ -134,7 +159,7 @@ impl<'a, T: NbtTag<'a>> NbtTagVariant<'a, T> for T {
         value.write_nbt(writer)
     }
 
-    fn check_tag(tag: u8) -> bool {
+    fn check_nbt_tag(tag: u8) -> bool {
         tag == Self::NBT_TAG
     }
 
@@ -334,40 +359,182 @@ pub struct NbtByteArray;
 pub struct NbtIntArray;
 pub struct NbtLongArray;
 
-macro_rules! inherit_from_nbt_tag {
-    ($($inheritance: ident => $ty: ty = $tag: expr$(,)*)*) => {
+impl<'a> NbtTagVariant<'a, &'a [u8]> for NbtByteArray {
+    fn get_nbt_tag(_: &&'a [u8]) -> anyhow::Result<u8> {
+        Ok(NBT_TAG_BYTE_ARRAY)
+    }
+
+    fn write_nbt_variant<W: ProtocolWriter>(value: &&'a [u8], writer: &mut W) -> anyhow::Result<()> {
+        (value.len() as i32).write_nbt(writer)?;
+        writer.write_bytes(*value);
+        Ok(())
+    }
+
+    fn check_nbt_tag(tag: u8) -> bool {
+        tag == NBT_TAG_BYTE_ARRAY
+    }
+
+    fn read_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<&'a [u8]> {
+        let len = i32::read_nbt(cursor)? as _;
+        cursor.take_bytes(len)
+    }
+
+    fn skip_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        let mut result = 0;
+        for _ in 0..amount {
+            let len = i32::read_nbt(cursor)? as _;
+            if len <= 0 { result += 4; continue; }
+            cursor.take_bytes(len)?;
+            result += 4 + len;
+        }
+        Ok(result)
+    }
+}
+
+impl<'a> NbtTagVariant<'a, Cow<'a, [u8]>> for NbtByteArray {
+    fn get_nbt_tag(_: &Cow<'a, [u8]>) -> anyhow::Result<u8> {
+        Ok(NBT_TAG_BYTE_ARRAY)
+    }
+
+    fn write_nbt_variant<W: ProtocolWriter>(value: &Cow<'a, [u8]>, writer: &mut W) -> anyhow::Result<()> {
+        match value {
+            Cow::Owned(owned) => Self::write_nbt_variant(owned, writer),
+            Cow::Borrowed(borrowed) => Self::write_nbt_variant(borrowed, writer),
+        }
+    }
+
+    fn check_nbt_tag(tag: u8) -> bool {
+        tag == NBT_TAG_BYTE_ARRAY
+    }
+
+    fn read_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Cow<'a, [u8]>> {
+        Self::read_nbt_variant(cursor).map(|val: &'a [u8]| Cow::Borrowed(val))
+    }
+
+    fn skip_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        <NbtByteArray as NbtTagVariant<'a, &'a [u8]>>::skip_nbt_variant(cursor, amount)
+    }
+}
+
+impl<'a> NbtTagVariant<'a, Vec<u8>> for NbtByteArray {
+    fn get_nbt_tag(_: &Vec<u8>) -> anyhow::Result<u8> {
+        Ok(NBT_TAG_BYTE_ARRAY)
+    }
+
+    fn write_nbt_variant<W: ProtocolWriter>(value: &Vec<u8>, writer: &mut W) -> anyhow::Result<()> {
+        Self::write_nbt_variant(&value.as_slice(), writer)
+    }
+
+    fn check_nbt_tag(tag: u8) -> bool {
+        tag == NBT_TAG_BYTE_ARRAY
+    }
+
+    fn read_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Vec<u8>> {
+        Self::read_nbt_variant(cursor).map(|val: &'a [u8]| val.to_owned())
+    }
+
+    fn skip_nbt_variant<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        <NbtByteArray as NbtTagVariant<'a, &'a [u8]>>::skip_nbt_variant(cursor, amount)
+    }
+}
+
+macro_rules! borrowed_inherit_from_nbt_tag {
+    ($($inheritance: ident => $inner: ty, $ty: ty = $tag: expr$(,)*)*) => {
         $(
         impl<'a> $crate::nbt::NbtTagVariant<'a, $inheritance<'a>> for $ty {
-            fn get_tag(_: &$inheritance<'a>) -> $crate::anyhow::Result<u8> {
+            fn get_nbt_tag(_: &$inheritance<'a>) -> $crate::anyhow::Result<u8> {
                 Ok($tag)
             }
 
             fn write_nbt_variant<W: $crate::ProtocolWriter>(value: &$inheritance<'a>, writer: &mut W) -> $crate::anyhow::Result<()> {
-                <$inheritance::<'a> as $crate::nbt::NbtTag<'a>>::write_nbt(value, writer)
+                (value.len()? as i32).write_nbt(writer)?;
+                value.write_nbt_values(writer)
             }
 
-            fn check_tag(tag: u8) -> bool {
+            fn check_nbt_tag(tag: u8) -> bool {
                 tag == $tag
             }
 
             fn read_nbt_variant<C: $crate::ProtocolCursor<'a>>(cursor: &mut C) -> $crate::ProtocolResult<$inheritance<'a>> {
-                <$inheritance::<'a> as $crate::nbt::NbtTag<'a>>::read_nbt(cursor)
+                let len = i32::read_nbt(cursor)? as _;
+                $inheritance::<'a>::read_nbt_values(cursor, len)
             }
 
             fn skip_nbt_variant<C: $crate::ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> $crate::ProtocolResult<usize> {
-                <$inheritance::<'a> as $crate::nbt::NbtTag<'a>>::skip_nbt(cursor, amount)
+                let mut result = 0;
+                for _ in 0..amount {
+                    let len = i32::read_nbt(cursor)? as _;
+                    if len <= 0 { result += 4; continue; }
+                    result += 4 + $inheritance::<'a>::skip_nbt_values(cursor, len)?;
+                }
+                Ok(result)
+            }
+        }
+
+        impl<'a> $crate::nbt::NbtTagVariant<'a, Cow<'a, [$inner]>> for $ty {
+            fn get_nbt_tag(_: &Cow<'a, [$inner]>) -> $crate::anyhow::Result<u8> {
+                Ok($tag)
+            }
+
+            fn write_nbt_variant<W: $crate::ProtocolWriter>(value: &Cow<'a, [$inner]>, writer: &mut W) -> $crate::anyhow::Result<()> {
+                let slice = match value {
+                    Cow::Owned(owned) => owned.as_slice(),
+                    Cow::Borrowed(borrowed) => borrowed
+                };
+                (slice.len() as i32).write_nbt(writer)?;
+                for to_write in slice { to_write.write_nbt(writer)? }
+                Ok(())
+            }
+
+            fn check_nbt_tag(tag: u8) -> bool {
+                tag == $tag
+            }
+
+            fn read_nbt_variant<C: $crate::ProtocolCursor<'a>>(cursor: &mut C) -> $crate::ProtocolResult<Cow<'a, [$inner]>> {
+                <$ty as $crate::nbt::NbtTagVariant<'a, Vec<$inner>>>::read_nbt_variant(cursor).map(|val| Cow::Owned(val))
+            }
+
+            fn skip_nbt_variant<C: $crate::ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> $crate::ProtocolResult<usize> {
+                <$ty as $crate::nbt::NbtTagVariant<'a, $inheritance<'a>>>::skip_nbt_variant(cursor, amount)
+            }
+        }
+
+
+        impl<'a> $crate::nbt::NbtTagVariant<'a, Vec<$inner>> for $ty {
+            fn get_nbt_tag(_: &Vec<$inner>) -> $crate::anyhow::Result<u8> {
+                Ok($tag)
+            }
+
+            fn write_nbt_variant<W: $crate::ProtocolWriter>(value: &Vec<$inner>, writer: &mut W) -> $crate::anyhow::Result<()> {
+                (value.len() as i32).write_nbt(writer)?;
+                for to_write in value { to_write.write_nbt(writer)? }
+                Ok(())
+            }
+
+            fn check_nbt_tag(tag: u8) -> bool {
+                tag == $tag
+            }
+
+            fn read_nbt_variant<C: $crate::ProtocolCursor<'a>>(cursor: &mut C) -> $crate::ProtocolResult<Vec<$inner>> {
+                let len = i32::read_nbt(cursor)?;
+                let mut result = Vec::new();
+                for _ in 0..len {
+                    result.push(<$inner>::read_nbt(cursor)?)
+                }
+                Ok(result)
+            }
+
+            fn skip_nbt_variant<C: $crate::ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> $crate::ProtocolResult<usize> {
+                <$ty as $crate::nbt::NbtTagVariant<'a, $inheritance<'a>>>::skip_nbt_variant(cursor, amount)
             }
         }
         )*
     }
 }
 
-type U8Array<'a> = &'a [u8];
-
-inherit_from_nbt_tag!(
-    U8Array => NbtByteArray = NBT_TAG_BYTE_ARRAY,
-    NbtBorrowedI32Array => NbtIntArray = NBT_TAG_INT_ARRAY,
-    NbtBorrowedI64Array => NbtLongArray = NBT_TAG_LONG_ARRAY,
+borrowed_inherit_from_nbt_tag!(
+    NbtBorrowedI32Array => i32, NbtIntArray = NBT_TAG_INT_ARRAY,
+    NbtBorrowedI64Array => i64, NbtLongArray = NBT_TAG_LONG_ARRAY,
 );
 
 pub mod compound {
@@ -386,4 +553,100 @@ pub mod compound {
         Ok(())
     }
 
+    #[macro_export]
+    macro_rules! write_compound {
+        ($writer: ident, $($name: expr => $ty: ty, $val: expr$(,)*)*) => {
+            $(
+            if $val.should_write_nbt() {
+                write_nbt_str($name, $writer)?;
+                <$ty>::NBT_TAG.write_nbt($writer)?;
+                $val.write_nbt($writer)?;
+            }
+            )*
+        }
+    }
+
+}
+
+impl<'a, T: NbtTag<'a>> NbtTag<'a> for Option<T> {
+    const NBT_TAG: u8 = T::NBT_TAG;
+
+    fn default_nbt_value() -> Option<Self> {
+        None
+    }
+
+    fn should_write_nbt(&self) -> bool {
+        self.is_some()
+    }
+
+    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        match self {
+            Some(value) => value.write_nbt(writer),
+            None => Err(anyhow::Error::msg("None option can not be written")),
+        }
+    }
+
+    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        T::read_nbt(cursor).map(|val| Some(val))
+    }
+
+    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        T::skip_nbt(cursor, amount)
+    }
+}
+
+impl<'a, T: NbtTag<'a>, U> NbtTag<'a> for Vector3D<T, U> {
+    const NBT_TAG: u8 = NBT_TAG_COMPOUND;
+
+    fn write_nbt<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        write_compound!(
+            writer,
+            "X" => T, self.x,
+            "Y" => T, self.y,
+            "Z" => T, self.z,
+        );
+        Ok(())
+    }
+
+    fn read_nbt<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let mut x = None;
+        let mut y = None;
+        let mut z = None;
+        compound::read_nbt_compound(cursor, |tag, name, cursor| {
+            if tag != T::NBT_TAG { return Err(ProtocolError::Any(anyhow::Error::msg("Bad tag"))); }
+            match name.as_ref() {
+                "X" => &mut x,
+                "Y" => &mut y,
+                "Z" => &mut z,
+                _ => return Err(ProtocolError::Any(anyhow::Error::msg("Bad name"))),
+            }.replace(T::read_nbt(cursor)?);
+            Ok(())
+        })?;
+        if x.is_none() || y.is_none() || z.is_none() {
+            return Err(ProtocolError::Any(anyhow::Error::msg("Not each value presented")));
+        }
+        unsafe {
+            Ok(Self {
+                x: x.unwrap_unchecked(),
+                y: y.unwrap_unchecked(),
+                z: z.unwrap_unchecked(),
+                _unit: PhantomData,
+            })
+        }
+    }
+
+    fn skip_nbt<C: ProtocolCursor<'a>>(cursor: &mut C, amount: usize) -> ProtocolResult<usize> {
+        let mut result = 0;
+        for _ in 0..amount {
+            compound::read_nbt_compound(cursor, |tag, name, cursor| {
+                if tag != T::NBT_TAG { return Err(ProtocolError::Any(anyhow::Error::msg("Bad tag"))); }
+                match name.as_ref() {
+                    "X" | "Y" | "Z" => result += 3 + name.len() + T::skip_nbt(cursor, 1)?,
+                    _ => Err(ProtocolError::Any(anyhow::Error::msg("Bad name")))?,
+                };
+                Ok(())
+            })?;
+        }
+        Ok(result)
+    }
 }

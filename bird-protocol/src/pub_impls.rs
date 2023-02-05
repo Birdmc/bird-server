@@ -1,5 +1,4 @@
-use std::ops::BitOrAssign;
-use crate::{ProtocolCursor, ProtocolError, ProtocolReadable, ProtocolResult, ProtocolWritable, ProtocolWriter};
+use crate::{ProtocolCursor, ProtocolError, ProtocolResult, ProtocolWriter};
 
 impl<'a> ProtocolCursor<'a> for &'a [u8] {
     fn take_byte(&mut self) -> ProtocolResult<u8> {
