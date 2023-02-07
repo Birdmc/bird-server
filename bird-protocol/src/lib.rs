@@ -54,6 +54,12 @@ pub type LengthConstRawArray<V, VV, const SIZE: usize> = LengthFunctionRawArray<
 
 pub type LengthConstArray<V, VV, const SIZE: usize> = LengthFunctionArray<V, VV, ProtocolLengthConstDeterminer<SIZE>>;
 
+pub struct ConstLengthArray<T, const LENGTH: usize>(PhantomData<T>);
+
+pub struct ConstLengthRawArray<T, const LENGTH: usize>(PhantomData<T>);
+
+pub struct ProtocolVariantOption<V, VV>(PhantomData<(V, VV)>);
+
 pub struct Json;
 
 pub struct Nbt;
@@ -142,6 +148,12 @@ pub trait ProtocolCursor<'a> {
     /// # Features
     /// Returned slice must be with length of the given length
     fn take_bytes(&mut self, length: usize) -> ProtocolResult<&'a [u8]>;
+
+    fn take_fixed_bytes<const LENGTH: usize>(&mut self) -> ProtocolResult<&'a [u8; LENGTH]> {
+        self.take_bytes(LENGTH)?
+            .try_into()
+            .map_err(|err| ProtocolError::Any(anyhow::Error::msg("Something bad happened")))
+    }
 
     fn remaining_bytes(&self) -> usize;
 

@@ -121,7 +121,7 @@ pub struct EncryptionRequestLS2C<'a> {
 }
 
 #[derive(ProtocolAll, Clone, Copy, PartialEq, Debug)]
-pub struct LoginSuccessProperty<'a> {
+pub struct Property<'a> {
     pub name: &'a str,
     pub value: &'a str,
     pub signature: Option<&'a str>,
@@ -132,8 +132,8 @@ pub struct LoginSuccessProperty<'a> {
 pub struct LoginSuccessLS2C<'a> {
     pub uuid: Uuid,
     pub username: &'a str,
-    #[bp(variant = "LengthProvidedArray<i32, VarInt, LoginSuccessProperty<'a>, LoginSuccessProperty<'a>>")]
-    pub properties: Cow<'a, [LoginSuccessProperty<'a>]>,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, Property<'a>, Property<'a>>")]
+    pub properties: Cow<'a, [Property<'a>]>,
 }
 
 #[derive(ProtocolAll, ProtocolPacket, Clone, Copy, PartialEq, Debug)]
@@ -1698,6 +1698,10 @@ impl<'a> BitSet<'a> {
         }
     }
 
+    pub fn get_or_false(&self, index: usize) -> bool {
+        self.get(index).unwrap_or(false)
+    }
+
     pub fn long_iter(&self) -> impl Iterator<Item=u64> + 'a {
         self.clone().0
     }
@@ -2981,6 +2985,195 @@ pub struct PlayerAbilitiesFlags {
     pub creative_mode: bool,
     #[bits(4)]
     _gap: u8,
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+pub struct PlayerChatPreviousMessage<'a> {
+    #[bp(variant = VarInt)]
+    pub message_id: i32,
+    #[bp(variant = "ProtocolVariantOption<&'a [u8; 256], ConstLengthRawArray<u8, 256>>")]
+    pub signature: Option<&'a [u8; 256]>,
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+#[bp(variant = VarInt, ty = i32)]
+pub enum PlayerChatFilter<'a> {
+    PassThrough,
+    FullyFiltered,
+    PartiallyFiltered { bits: BitSet<'a> },
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x31, state = Play, bound = Client)]
+pub struct PlayerChatMessagePS2C<'a> {
+    pub sender: Uuid,
+    #[bp(variant = VarInt)]
+    pub index: i32,
+    #[bp(variant = "ProtocolVariantOption<&'a [u8; 256], ConstLengthRawArray<u8, 256>>")]
+    pub message_signature_bytes: Option<&'a [u8; 256]>,
+    pub message: &'a str,
+    pub timestamp: i64,
+    pub salt: i64,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, PlayerChatPreviousMessage<'a>, PlayerChatPreviousMessage<'a>>")]
+    pub previous_messages: Cow<'a, [PlayerChatPreviousMessage<'a>]>,
+    pub unsigned_content: Option<Component<'a>>,
+    pub filter: PlayerChatFilter<'a>,
+    #[bp(variant = VarInt)]
+    pub chat_ty: i32,
+    pub network_name: Component<'a>,
+    pub network_target_name: Option<Component<'a>>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x32, state = Play, bound = Client)]
+pub struct EndCombatPS2C {
+    #[bp(variant = VarInt)]
+    pub duration: i32,
+    pub entity_id: i32,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Copy, Debug)]
+#[bp(id = 0x33, state = Play, bound = Client)]
+pub struct EnterCombatPS2C;
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x34, state = Play, bound = Client)]
+pub struct CombatDeathPS2C<'a> {
+    #[bp(variant = VarInt)]
+    pub player_id: i32,
+    pub entity_id: i32,
+    pub message: Component<'a>,
+}
+
+#[derive(ProtocolAll, ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x35, state = Play, bound = Client)]
+pub struct PlayerInfoRemovePS2C<'a> {
+    #[bp(variant = "LengthProvidedRawArray<i32, VarInt, Uuid, Uuid>")]
+    pub players: Cow<'a, [Uuid]>,
+}
+
+#[derive(ProtocolAll, Clone, Debug)]
+pub struct PlayerInfoUpdateAddAction<'a> {
+    pub name: &'a str,
+    #[bp(variant = "LengthProvidedArray<i32, VarInt, Property<'a>, Property<'a>>")]
+    pub properties: Cow<'a, [Property<'a>]>,
+}
+
+#[derive(ProtocolAll, Clone, Debug)]
+pub struct PlayerInfoUpdateInitializeChat<'a> {
+    pub chat_session_id: Uuid,
+    pub public_key_expire_time: i64,
+    #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+    pub encoded_public_key: &'a [u8],
+    #[bp(variant = "LengthProvidedBytesArray<i32, VarInt>")]
+    pub public_key_signature: &'a [u8],
+}
+
+#[derive(ProtocolAll, Clone, Copy, Debug)]
+#[bp(ty = i32, variant = VarInt)]
+pub enum PlayerInfoUpdateGameMode {
+    Survival,
+    Creative,
+    Adventure,
+    Spectator,
+}
+
+#[derive(Clone, Debug)]
+pub struct PlayerInfoUpdateAction<'a> {
+    pub add: Option<PlayerInfoUpdateAddAction<'a>>,
+    pub initialize_chat: Option<PlayerInfoUpdateInitializeChat<'a>>,
+    pub update_game_mode: Option<PlayerInfoUpdateGameMode>,
+    pub update_listed: Option<bool>,
+    pub update_latency: Option<i32>,
+    pub update_display_name: Option<Option<Component<'a>>>,
+}
+
+impl<'a> PlayerInfoUpdateAction<'a> {
+    fn write<W: ProtocolWriter>(&self, self_bits: usize, bit_set: &mut OwnedBitSet, writer: &mut W) -> anyhow::Result<()> {
+        if let Some(ref to_write) = self.add {
+            bit_set.set(self_bits);
+            to_write.write(writer)?;
+        }
+        if let Some(ref to_write) = self.initialize_chat {
+            bit_set.set(self_bits + 1);
+            to_write.write(writer)?;
+        }
+        if let Some(ref to_write) = self.update_game_mode {
+            bit_set.set(self_bits + 2);
+            to_write.write(writer)?;
+        }
+        if let Some(ref to_write) = self.update_listed {
+            bit_set.set(self_bits + 3);
+            to_write.write(writer)?;
+        }
+        if let Some(ref to_write) = self.update_latency {
+            bit_set.set(self_bits + 4);
+            VarInt::write_variant(to_write, writer)?;
+        }
+        if let Some(ref to_write) = self.update_display_name {
+            bit_set.set(self_bits + 5);
+            to_write.write(writer)?;
+        }
+        Ok(())
+    }
+
+    fn read<C: ProtocolCursor<'a>>(self_bits: usize, bit_set: &BitSet<'a>, cursor: &mut C) -> ProtocolResult<Self> {
+        Ok(Self {
+            add: if bit_set.get_or_false(self_bits) { Some(PlayerInfoUpdateAddAction::read(cursor)?) } else { None },
+            initialize_chat: if bit_set.get_or_false(self_bits + 1) { Some(PlayerInfoUpdateInitializeChat::read(cursor)?) } else { None },
+            update_game_mode: if bit_set.get_or_false(self_bits + 2) { Some(PlayerInfoUpdateGameMode::read(cursor)?) } else { None },
+            update_listed: if bit_set.get_or_false(self_bits + 3) { Some(bool::read(cursor)?) } else { None },
+            update_latency: if bit_set.get_or_false(self_bits + 4) { Some(VarInt::read_variant(cursor)?) } else { None },
+            update_display_name: if bit_set.get_or_false(self_bits + 5) { Some(Option::read(cursor)?) } else { None },
+        })
+    }
+
+    fn move_bits(self_bits: &mut usize) {
+        *self_bits += 6;
+    }
+}
+
+#[derive(ProtocolPacket, Clone, Debug)]
+#[bp(id = 0x36, state = Play, bound = Client)]
+pub struct PlayerInfoUpdatePS2C<'a> {
+    pub actions: Cow<'a, [(Uuid, PlayerInfoUpdateAction<'a>)]>,
+}
+
+impl<'a> ProtocolSize for PlayerInfoUpdatePS2C<'a> {
+    const SIZE: Range<u32> = (BitSet::SIZE.start + VarInt::SIZE.start..u32::MAX);
+}
+
+impl<'a> ProtocolWritable for PlayerInfoUpdatePS2C<'a> {
+    fn write<W: ProtocolWriter>(&self, writer: &mut W) -> anyhow::Result<()> {
+        let mut bit_set = OwnedBitSet::new();
+        let mut actions_writer = Vec::new();
+        let mut bits = 0;
+        for (player_uuid, action) in self.actions.as_ref() {
+            player_uuid.write(&mut actions_writer)?;
+            action.write(bits, &mut bit_set, &mut actions_writer)?;
+            PlayerInfoUpdateAction::move_bits(&mut bits);
+        }
+        bit_set.get_bit_set().write(writer)?;
+        VarInt::write_variant(&(self.actions.len() as i32), writer)?;
+        writer.write_vec_bytes(actions_writer);
+        Ok(())
+    }
+}
+
+impl<'a> ProtocolReadable<'a> for PlayerInfoUpdatePS2C<'a> {
+    fn read<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Self> {
+        let bit_set = BitSet::read(cursor)?;
+        let mut actions = Vec::new();
+        let mut bits = 0;
+        for _ in 0i32..VarInt::read_variant(cursor)? {
+            actions.push((
+                Uuid::read(cursor)?,
+                PlayerInfoUpdateAction::read(bits, &bit_set, cursor)?,
+            ));
+            PlayerInfoUpdateAction::move_bits(&mut bits);
+        }
+        Ok(Self { actions: Cow::Owned(actions) })
+    }
 }
 
 #[cfg(test)]

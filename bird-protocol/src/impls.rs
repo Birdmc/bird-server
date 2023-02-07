@@ -1,4 +1,5 @@
 use std::{borrow::Cow, str::from_utf8};
+use std::mem::{MaybeUninit, size_of};
 use euclid::{Vector2D, Vector3D};
 use bird_chat::component::Component;
 use bird_chat::identifier::{Identifier, IdentifierInner};
@@ -15,7 +16,7 @@ macro_rules! protocol_raw {
     }
 }
 
-protocol_raw!(u8, i8, bool,);
+protocol_raw!(u8, i8, bool, Uuid,);
 
 #[cfg(target_endian = "big")]
 protocol_raw!(u16, i16, u32, i32, u64, i64, u128, i128);
@@ -1082,5 +1083,77 @@ impl<T: ProtocolWritable, const S: usize> ProtocolVariantWritable<Option<T>> for
             Some(val) => val.write(writer),
             None => Ok(writer.write_fixed_bytes([0; S]))
         }
+    }
+}
+
+impl<T: ProtocolSize, const LENGTH: usize> ProtocolSize for ConstLengthArray<T, LENGTH> {
+    const SIZE: Range<u32> = add_u32_without_overflow_array([T::SIZE.start; LENGTH])..add_u32_without_overflow_array([T::SIZE.end; LENGTH]);
+}
+
+impl<T: ProtocolWritable, const LENGTH: usize> ProtocolVariantWritable<[T; LENGTH]> for ConstLengthArray<T, LENGTH> {
+    fn write_variant<W: ProtocolWriter>(object: &[T; LENGTH], writer: &mut W) -> anyhow::Result<()> {
+        for obj in object {
+            obj.write(writer)?
+        }
+        Ok(())
+    }
+}
+
+impl<'a, T: ProtocolReadable<'a> + Clone, const LENGTH: usize> ProtocolVariantReadable<'a, [T; LENGTH]> for ConstLengthArray<T, LENGTH> {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<[T; LENGTH]> {
+        let mut result: [T; LENGTH] = unsafe { MaybeUninit::uninit().assume_init() };
+        let mut current = result.as_mut_slice();
+        for _ in 0..LENGTH {
+            current[0] = T::read(cursor)?;
+            current = &mut current[1..];
+        }
+        Ok(result)
+    }
+}
+
+impl<T: ProtocolSize, const LENGTH: usize> ProtocolSize for ConstLengthRawArray<T, LENGTH> {
+    const SIZE: Range<u32> = add_u32_without_overflow_array([T::SIZE.start; LENGTH])..add_u32_without_overflow_array([T::SIZE.end; LENGTH]);
+}
+
+impl<'a, T: ProtocolWritable + ProtocolRaw, const LENGTH: usize> ProtocolVariantWritable<&'a [T; LENGTH]> for ConstLengthRawArray<T, LENGTH> {
+    fn write_variant<W: ProtocolWriter>(object: &&'a [T; LENGTH], writer: &mut W) -> anyhow::Result<()> {
+        Ok(writer.write_bytes(t_array_into_byte_array(*object)))
+    }
+}
+
+impl<T, const LENGTH: usize> ConstLengthRawArray<T, LENGTH> {
+    const BYTES_LENGTH: usize = LENGTH * size_of::<T>();
+}
+
+impl<'a, T: ProtocolReadable<'a> + ProtocolRaw, const LENGTH: usize> ProtocolVariantReadable<'a, &'a [T; LENGTH]> for ConstLengthRawArray<T, LENGTH>
+    where [(); Self::BYTES_LENGTH ]: {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<&'a [T; LENGTH]> {
+        let bytes = cursor.take_fixed_bytes::<{ Self::BYTES_LENGTH }>()?;
+        Ok(unsafe { &*(bytes as *const u8 as *const () as *const [T; LENGTH]) })
+    }
+}
+
+impl<V, VV: ProtocolSize> ProtocolSize for ProtocolVariantOption<V, VV> {
+    const SIZE: Range<u32> = 1..add_u32_without_overflow(VV::SIZE.end, 1);
+}
+
+impl<V, VV: ProtocolVariantWritable<V>> ProtocolVariantWritable<Option<V>> for ProtocolVariantOption<V, VV> {
+    fn write_variant<W: ProtocolWriter>(object: &Option<V>, writer: &mut W) -> anyhow::Result<()> {
+        match object {
+            Some(val) => {
+                true.write(writer)?;
+                VV::write_variant(val, writer)
+            },
+            None => false.write(writer),
+        }
+    }
+}
+
+impl<'a, V, VV: ProtocolVariantReadable<'a, V>> ProtocolVariantReadable<'a, Option<V>> for ProtocolVariantOption<V, VV> {
+    fn read_variant<C: ProtocolCursor<'a>>(cursor: &mut C) -> ProtocolResult<Option<V>> {
+        Ok(match bool::read(cursor)? {
+            true => Some(VV::read_variant(cursor)?),
+            false => None,
+        })
     }
 }
